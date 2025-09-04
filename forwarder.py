@@ -82,7 +82,7 @@ def get_country_info(number: str):
 def extract_sms(driver):
     """Extract SMS from page and send to Telegram."""
     global last_messages
-    for attempt in range(3):  # Retry up to 3 times
+    for attempt in range(3):
         try:
             driver.get(config.SMS_URL)
             time.sleep(2)
@@ -121,10 +121,8 @@ def extract_sms(driver):
                     last_messages.pop()  # Remove oldest message
                 save_last_messages(last_messages)
 
-                # Use configurable timezone offset
                 timestamp = datetime.utcnow() + timedelta(hours=config.TIMEZONE_OFFSET)
 
-                # Extract OTP code (support digits and alphanumeric)
                 match = re.search(r'\b[A-Za-z0-9]{4,8}\b', message)
                 otp_code = match.group(0) if match else "Unknown"
 
@@ -145,10 +143,10 @@ def extract_sms(driver):
 <i>🤖 Powered by Incognito</i>
 """
                 send_to_telegram(html_message)
-            return  # Exit after successful processing
+            return
         except Exception as e:
             print(f"[ERR] Failed to extract SMS (attempt {attempt + 1}/3): {e}")
             if attempt < 2:
-                time.sleep(2)  # Wait before retrying
+                time.sleep(2)
             else:
                 print("[❌] Max retries reached.")
