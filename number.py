@@ -8,10 +8,10 @@ import csv
 from datetime import datetime
 
 # Bot configuration
-API_TOKEN = 'YOUR_BOT_TOKEN_HERE'
+API_TOKEN = '8428320400:AAHvjFBNkpjAvsYEzkl4LX17qCAXGjoTOpM'
 ADMIN_IDS = [7868585904, 6577308099]  # Admin user IDs
-MAIN_CHANNEL = '@your_main_channel'
-BACKUP_CHANNEL = '@your_backup_channel'
+MAIN_CHANNEL = '@atik_method_zone'
+BACKUP_CHANNEL = '-1003096164193'
 
 bot = telebot.TeleBot(API_TOKEN)
 
