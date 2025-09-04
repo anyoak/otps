@@ -1,4 +1,8 @@
-import time, re, requests, json
+import time
+import re
+import requests
+import json
+import os
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
 import phonenumbers
@@ -6,10 +10,33 @@ from phonenumbers import geocoder
 import config
 
 # Cache for sent messages
-last_messages = set()
+LAST_MESSAGES_FILE = "last_messages.json"
+MAX_MESSAGES = 1000  # Limit memory usage
 
-# Telegram send function
+def load_last_messages():
+    """Load cached messages from file."""
+    try:
+        if os.path.exists(LAST_MESSAGES_FILE):
+            with open(LAST_MESSAGES_FILE, "r") as f:
+                return set(json.load(f))
+        return set()
+    except Exception as e:
+        print(f"[⚠️] Failed to load last messages: {e}")
+        return set()
+
+def save_last_messages(messages):
+    """Save cached messages to file."""
+    try:
+        with open(LAST_MESSAGES_FILE, "w") as f:
+            json.dump(list(messages)[:MAX_MESSAGES], f)
+        print("[✅] Last messages saved.")
+    except Exception as e:
+        print(f"[⚠️] Failed to save last messages: {e}")
+
+last_messages = load_last_messages()
+
 def send_to_telegram(text: str):
+    """Send message to Telegram."""
     url = f"https://api.telegram.org/bot{config.BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": config.CHAT_ID,
@@ -19,24 +46,23 @@ def send_to_telegram(text: str):
     try:
         res = requests.post(url, data=payload, timeout=10)
         if res.status_code == 200:
-            print(f"[✅] Telegram message sent.")
+            print("[✅] Telegram message sent.")
         else:
-            print(f"[❌] Failed: {res.status_code} - {res.text}")
+            print(f"[❌] Telegram failed: {res.status_code} - {res.text}")
     except requests.exceptions.RequestException as e:
         print(f"[❌] Telegram request error: {e}")
 
-# Mask number like 88017****566
 def mask_number(number: str) -> str:
+    """Mask phone number for privacy."""
     number = str(number)
     if len(number) > 8:
         return number[:5] + "****" + number[-3:]
     elif len(number) > 5:
         return number[:2] + "****" + number[-2:]
-    else:
-        return number
+    return number
 
-# Auto country detection + flag
 def get_country_info(number: str):
+    """Get country flag and name from phone number."""
     try:
         if not number.startswith('+'):
             number = '+' + number
@@ -49,61 +75,63 @@ def get_country_info(number: str):
         else:
             flag = "🏳️"
         return flag, country_name
-    except:
+    except phonenumbers.NumberParseException as e:
+        print(f"[⚠️] Failed to parse number {number}: {e}")
         return "🏳️", "Unknown"
 
-# Extract SMS and send
 def extract_sms(driver):
+    """Extract SMS from page and send to Telegram."""
     global last_messages
-    try:
-        driver.get(config.SMS_URL)
-        time.sleep(2)
+    for attempt in range(3):  # Retry up to 3 times
+        try:
+            driver.get(config.SMS_URL)
+            time.sleep(2)
+            soup = BeautifulSoup(driver.page_source, 'html.parser')
+            headers = soup.find_all('th')
 
-        # Save cookies automatically
-        with open("cookies.json", "w") as f:
-            json.dump(driver.get_cookies(), f)
+            number_idx = service_idx = sms_idx = None
+            for idx, th in enumerate(headers):
+                label = th.get('aria-label', '').lower() or th.get_text(strip=True).lower()
+                if 'number' in label:
+                    number_idx = idx
+                elif 'cli' in label or 'service' in label:
+                    service_idx = idx
+                elif 'sms' in label or 'message' in label:
+                    sms_idx = idx
 
-        soup = BeautifulSoup(driver.page_source, 'html.parser')
-        headers = soup.find_all('th')
+            if None in (number_idx, service_idx, sms_idx):
+                print("[⚠️] Could not detect all required columns.")
+                return
 
-        number_idx = service_idx = sms_idx = None
-        for idx, th in enumerate(headers):
-            label = th.get('aria-label', '').lower()
-            if 'number' in label:
-                number_idx = idx
-            elif 'cli' in label or 'service' in label:
-                service_idx = idx
-            elif 'sms' in label:
-                sms_idx = idx
+            rows = soup.find_all('tr')[1:]
+            for row in rows:
+                cols = row.find_all('td')
+                if len(cols) <= max(number_idx, service_idx, sms_idx):
+                    continue
 
-        if None in (number_idx, service_idx, sms_idx):
-            print("[⚠️] Could not detect all required columns.")
-            return
+                number = cols[number_idx].get_text(strip=True) or "Unknown"
+                service = cols[service_idx].get_text(strip=True) or "Unknown"
+                message = cols[sms_idx].get_text(strip=True)
 
-        rows = soup.find_all('tr')[1:]
-        for row in rows:
-            cols = row.find_all('td')
-            if len(cols) <= max(number_idx, service_idx, sms_idx):
-                continue
+                if not message or message in last_messages:
+                    continue
 
-            number = cols[number_idx].get_text(strip=True) or "Unknown"
-            service = cols[service_idx].get_text(strip=True) or "Unknown"
-            message = cols[sms_idx].get_text(strip=True)
+                last_messages.add(message)
+                if len(last_messages) > MAX_MESSAGES:
+                    last_messages.pop()  # Remove oldest message
+                save_last_messages(last_messages)
 
-            if not message or message in last_messages:
-                continue
+                # Use configurable timezone offset
+                timestamp = datetime.utcnow() + timedelta(hours=config.TIMEZONE_OFFSET)
 
-            last_messages.add(message)
-            timestamp = datetime.utcnow() + timedelta(hours=6)
+                # Extract OTP code (support digits and alphanumeric)
+                match = re.search(r'\b[A-Za-z0-9]{4,8}\b', message)
+                otp_code = match.group(0) if match else "Unknown"
 
-            # Extract OTP code
-            match = re.search(r'\b\d{4,8}\b', message)
-            otp_code = match.group(0) if match else "Unknown"
+                masked_number = mask_number(number)
+                country_flag, country_name = get_country_info(number)
 
-            masked_number = mask_number(number)
-            country_flag, country_name = get_country_info(number)
-
-            html_message = f"""
+                html_message = f"""
 <b>🔐 New OTP Captured</b>
 <pre>──────────────────────────</pre>
 <b>🕒 Time:</b> <code>{timestamp.strftime('%Y-%m-%d %H:%M:%S')}</code>
@@ -111,13 +139,16 @@ def extract_sms(driver):
 <b>📞 Number:</b> <code>{masked_number}</code>
 <b>{country_flag} Country:</b> <code>{country_name}</code>
 <b>✅ OTP Code:</b> <code>{otp_code}</code>
-
 <b>💬 Full Message:</b>
 <tg-spoiler>{message.strip()}</tg-spoiler>
 <pre>──────────────────────────</pre>
 <i>🤖 Powered by Incognito</i>
 """
-            send_to_telegram(html_message)
-
-    except Exception as e:
-        print(f"[ERR] Failed to extract SMS: {e}")
+                send_to_telegram(html_message)
+            return  # Exit after successful processing
+        except Exception as e:
+            print(f"[ERR] Failed to extract SMS (attempt {attempt + 1}/3): {e}")
+            if attempt < 2:
+                time.sleep(2)  # Wait before retrying
+            else:
+                print("[❌] Max retries reached.")
