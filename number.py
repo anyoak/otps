@@ -9,7 +9,7 @@ from datetime import datetime
 
 # Bot configuration - REPLACE WITH YOUR ACTUAL BOT TOKEN
 # Format should be: "123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ"
-API_TOKEN = 'YOUR_BOT_TOKEN_HERE'  # Get from @BotFather - must contain a colon
+API_TOKEN = "8428320400:AAHvjFBNkpjAvsYEzkl4LX17qCAXGjoTOpM"  # Get from @BotFather - must contain a colon
 ADMIN_IDS = [7868585904, 6577308099]  # Admin user IDs
 MAIN_CHANNEL = '@atik_method_zone'  # Public channel
 BACKUP_CHANNEL = '-1003096164193'  # Private channel ID
