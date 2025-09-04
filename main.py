@@ -1,10 +1,12 @@
-import time
+import time, json
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from forwarder import extract_sms
 import config
-import json
+import os
+
+COOKIES_FILE = "cookies.json"
 
 def wait_for_login(driver, timeout=180):
     print("[*] Waiting for manual login...")
@@ -20,45 +22,66 @@ def wait_for_login(driver, timeout=180):
     print("[❌] Login timeout!")
     return False
 
-def launch_browser():
+def launch_browser(headless=False):
     chrome_options = Options()
     chrome_options.add_argument("--disable-extensions")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--start-maximized")
     chrome_options.add_argument("--disable-dev-shm-usage")
-    # chrome_options.add_argument("--headless=new")  # Headless mode if you want
+    chrome_options.add_argument("--start-maximized")
+    if headless:
+        chrome_options.add_argument("--headless=new")  # Headless mode
 
-    service = Service()  # executable_path if needed
+    service = Service()  # Specify executable_path if needed
     driver = webdriver.Chrome(service=service, options=chrome_options)
 
-    # Load cookies if exists
-    try:
-        driver.get(config.LOGIN_URL)
-        with open("cookies.json", "r") as f:
-            cookies = json.load(f)
-        for cookie in cookies:
-            driver.add_cookie(cookie)
-        driver.refresh()
-        print("[✅] Cookies loaded, auto-login success!")
-    except:
-        print("[⚠️] No cookies found, manual login required.")
+    driver.get(config.LOGIN_URL)
+
+    # Load cookies if available
+    if os.path.exists(COOKIES_FILE):
+        try:
+            with open(COOKIES_FILE, "r") as f:
+                cookies = json.load(f)
+            for cookie in cookies:
+                # Selenium cookie format requires expiry as int
+                if 'expiry' in cookie:
+                    cookie['expiry'] = int(cookie['expiry'])
+                driver.add_cookie(cookie)
+            driver.refresh()
+            print("[✅] Cookies loaded, auto-login attempt done!")
+        except Exception as e:
+            print(f"[⚠️] Failed to load cookies: {e}")
 
     return driver
 
 def main():
-    driver = launch_browser()
-    driver.get(config.LOGIN_URL)
+    headless_mode = False  # True করলে GUI না খুলে headless run হবে
+    driver = launch_browser(headless=headless_mode)
 
-    if not wait_for_login(driver):
-        driver.quit()
-        return
+    # Check login if cookies not valid
+    if "Logout" not in driver.page_source and "logout" not in driver.page_source:
+        if not wait_for_login(driver):
+            driver.quit()
+            return
+        # Save cookies after manual login
+        try:
+            with open(COOKIES_FILE, "w") as f:
+                json.dump(driver.get_cookies(), f)
+            print("[✅] Cookies saved for future auto-login.")
+        except Exception as e:
+            print(f"[⚠️] Failed to save cookies: {e}")
+    else:
+        print("[*] Logged in via cookies.")
 
-    print("[*] Login done. Starting OTP monitoring...")
+    print("[*] Starting OTP monitoring...")
     try:
         while True:
-            extract_sms(driver)
-            time.sleep(5)
+            try:
+                extract_sms(driver)
+                time.sleep(5)
+            except Exception as e:
+                print(f"[ERR] Failed to extract SMS: {e}")
+                time.sleep(5)
     finally:
         driver.quit()
         print("[*] Browser closed.")
