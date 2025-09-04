@@ -1,66 +1,45 @@
 import time
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import datetime, timedelta
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-import config
+import config  # BOT_TOKEN, CHAT_ID, SMS_URL
 import re
 import phonenumbers
-from phonenumbers import geocoder, timezone
-import pytz
+from phonenumbers import geocoder, region_code_for_number
 
 # Cache for sent messages
 last_messages = set()
-
-def get_country_flag(region_code: str) -> str:
-    """Convert ISO region code (e.g. 'US', 'IN') into emoji flag."""
-    if not region_code or len(region_code) != 2:
-        return "🏳️"
-    try:
-        return chr(127397 + ord(region_code[0].upper())) + chr(127397 + ord(region_code[1].upper()))
-    except:
-        return "🏳️"
-
-def get_local_time(region_code: str) -> str:
-    """Return local time based on region code."""
-    try:
-        timezones = timezone.time_zones_for_country(region_code)
-        if timezones:
-            tz = pytz.timezone(timezones[0])
-            return datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
-    except:
-        pass
-    # fallback → UTC
-    return datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
 
 def send_to_telegram(text: str):
     url = f"https://api.telegram.org/bot{config.BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": config.CHAT_ID,
         "text": text,
-        "parse_mode": "Markdown",
-        "reply_markup": {
-            "inline_keyboard": [
-                [
-                    {"text": "🤖 Number Bot", "url": "https://t.me/Atik_number_bot"},
-                    {"text": "🔑 GET OTP", "url": "https://t.me/atik_methodzone_Otp"}
-                ],
-                [
-                    {"text": "🔗 Main Channel", "url": "https://t.me/atik_method_zone"},
-                    {"text": "🔗 Backup Channel", "url": "https://t.me/+8REFroGEWNM5ZjE9"}
-                ]
-            ]
-        }
+        "parse_mode": "Markdown"
     }
     try:
-        res = requests.post(url, json=payload, timeout=10)
+        res = requests.post(url, data=payload, timeout=10)
         if res.status_code == 200:
-            print(f"[✅] Telegram message sent.")
+            print(f"[✅] Telegram new OTP sent.")
         else:
             print(f"[❌] Failed to send Telegram message: {res.status_code} - {res.text}")
     except requests.exceptions.RequestException as e:
         print(f"[❌] Telegram request error: {e}")
+
+def mask_number(number: str) -> str:
+    """Mask phone number middle 3 digits"""
+    digits = re.sub(r"\D", "", number)
+    if len(digits) > 6:
+        return number[:4] + "***" + number[-3:]
+    return number
+
+def country_to_flag(country_code: str) -> str:
+    """Convert ISO country code to emoji flag"""
+    if not country_code or len(country_code) != 2:
+        return "🏳️"
+    return "".join(chr(127397 + ord(c)) for c in country_code.upper())
 
 def extract_sms(driver):
     global last_messages
@@ -86,7 +65,7 @@ def extract_sms(driver):
             print("[⚠️] Could not detect all required columns.")
             return
 
-        rows = soup.find_all('tr')[1:]
+        rows = soup.find_all('tr')[1:]  # Skip header row
         for row in rows:
             cols = row.find_all('td')
             if len(cols) <= max(number_idx, service_idx, sms_idx):
@@ -96,35 +75,41 @@ def extract_sms(driver):
             service = cols[service_idx].get_text(strip=True) or "Unknown"
             message = cols[sms_idx].get_text(strip=True)
 
+            # Skip blanks
             if not message or message in last_messages:
+                continue
+            if message.strip() in ("0", "Unknown") or (number in ("0", "Unknown") and service in ("0", "Unknown")):
                 continue
 
             last_messages.add(message)
+            timestamp = datetime.utcnow() + timedelta(hours=6)  # Dhaka time
 
-            # OTP detect (any language)
+            # OTP detection
+            otp_line = next((line for line in message.split('\n') if 'code' in line.lower()), '')
             code_match = re.search(r'\b\d{4,8}\b', message)
-            otp_code = code_match.group(0) if code_match else "N/A"
+            otp_code = code_match.group(0) if code_match else (otp_line.strip() if otp_line else "N/A")
 
-            # Detect country + flag + local time
+            # Country detection
             try:
                 parsed_number = phonenumbers.parse("+" + number, None)
-                country_name = geocoder.description_for_number(parsed_number, "en")
-                region_code = phonenumbers.region_code_for_number(parsed_number)
-                country_flag = get_country_flag(region_code)
-                local_time = get_local_time(region_code)
+                country_name = geocoder.description_for_number(parsed_number, "en") or "Unknown"
+                region = region_code_for_number(parsed_number)
+                country_flag = country_to_flag(region)
             except:
                 country_name = "Unknown"
                 country_flag = "🏳️"
-                local_time = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+
+            masked_number = mask_number(number)
 
             formatted = (
-                f"🔥 {country_name} OTP RECEIVED! ✨\n\n"
-                f"🕒 Time: {local_time}\n"
-                f"{country_flag} Country: {country_name}\n"
-                f"📱 Service: {service}\n"
-                f"📞 Number: {number}\n"
-                f"🔑 OTP:\n```{otp_code}```\n\n"
-                f"💬 Full Message:\n{message.strip()}"
+                f"🔥 *New OTP Captured!{service} of {country_flag}*\n\n"
+                f"🕒 *Time:* {timestamp.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"{country_flag} *Country:* {country_name}\n"
+                f"🌐 *Service:* {service}\n"
+                f"📞 *Number:* `{masked_number}`\n"
+                f"🔑 *OTP:* `{otp_code}`\n\n"
+                f"💬 *Full Message:*\n"
+                f"> {message.strip()}"
             )
             send_to_telegram(formatted)
 
@@ -137,6 +122,7 @@ if __name__ == "__main__":
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--start-maximized")
+    # chrome_options.add_argument("--headless=new")
 
     driver = webdriver.Chrome(options=chrome_options)
 
