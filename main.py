@@ -1,10 +1,9 @@
-import time, json
+import time, json, os
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from forwarder import extract_sms
 import config
-import os
 
 COOKIES_FILE = "cookies.json"
 
@@ -29,6 +28,11 @@ def launch_browser(headless=False):
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--start-maximized")
+
+    # Unique user-data-dir to avoid SessionNotCreatedException
+    user_data_dir = f"/tmp/selenium_{int(time.time())}"
+    chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
+
     if headless:
         chrome_options.add_argument("--headless=new")  # Headless mode
 
@@ -43,7 +47,6 @@ def launch_browser(headless=False):
             with open(COOKIES_FILE, "r") as f:
                 cookies = json.load(f)
             for cookie in cookies:
-                # Selenium cookie format requires expiry as int
                 if 'expiry' in cookie:
                     cookie['expiry'] = int(cookie['expiry'])
                 driver.add_cookie(cookie)
