@@ -1,7 +1,7 @@
 import time
 import json
 import os
-import uuid
+import psutil  # Added for process checking
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
@@ -13,17 +13,27 @@ import config
 
 COOKIES_FILE = "cookies.json"
 
+def check_running_instances():
+    """Check if another instance of Chrome or the script is running."""
+    script_name = os.path.basename(__file__)
+    for proc in psutil.process_iter(['name', 'cmdline']):
+        try:
+            if proc.name() == 'chrome' or (proc.name() == 'python' and script_name in ' '.join(proc.cmdline())):
+                print(f"[⚠️] Detected running instance: {proc.name()} (PID: {proc.pid}). Terminating it.")
+                proc.terminate()
+                proc.wait(timeout=5)  # Wait for clean exit
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
 def wait_for_login(driver, timeout=180):
     print("[*] Waiting for manual login...")
     start = time.time()
     while time.time() - start < timeout:
         time.sleep(2)
         try:
-            # Check for "Logout" or a specific element (e.g., user profile)
             if "Logout" in driver.page_source or "logout" in driver.page_source:
                 print("[✅] Login successful (detected 'Logout')!")
                 return True
-            # Alternative: Check for a specific element (adjust selector as needed)
             WebDriverWait(driver, 2).until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, "body"))
             )
@@ -42,17 +52,7 @@ def launch_browser(headless=False):
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--start-maximized")
-
-    # Unique user-data-dir
-    user_data_dir = f"/tmp/selenium_{uuid.uuid4().hex}"
-    chrome_options.add_argument(f"--user-data-dir={user_data_dir}")
-
-    try:
-        os.makedirs(user_data_dir, exist_ok=True)
-        print(f"[*] Created user-data-dir: {user_data_dir}")
-    except Exception as e:
-        print(f"[⚠️] Failed to create user-data-dir: {e}")
-        raise
+    # Removed --user-data-dir to avoid session conflicts
 
     if headless:
         chrome_options.add_argument("--headless=new")
@@ -94,6 +94,9 @@ def launch_browser(headless=False):
     return driver
 
 def main():
+    # Check for running instances
+    check_running_instances()
+
     headless_mode = False  # Set to True for headless mode
     driver = None
     try:
@@ -127,6 +130,8 @@ def main():
         if driver:
             driver.quit()
             print("[*] Browser closed.")
+        # Clean up any remaining Chrome processes
+        check_running_instances()
 
 if __name__ == "__main__":
     main()
