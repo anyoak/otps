@@ -1,36 +1,60 @@
 import time
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime, timedelta
+from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-import config  # BOT_TOKEN, CHAT_ID, SMS_URL
+import config
 import re
 import phonenumbers
-from phonenumbers import geocoder
+from phonenumbers import geocoder, timezone
+import pytz
 
 # Cache for sent messages
 last_messages = set()
 
-def mask_number(number):
-    """
-    Mask the middle digits of a number
-    Example: 880171234566 -> 88017**566
-    """
-    number = re.sub(r'\D', '', number)  # remove non-digit chars
-    if len(number) >= 8:
-        return number[:5] + '**' + number[-3:]
-    return number
+def get_country_flag(region_code: str) -> str:
+    """Convert ISO region code (e.g. 'US', 'IN') into emoji flag."""
+    if not region_code or len(region_code) != 2:
+        return "🏳️"
+    try:
+        return chr(127397 + ord(region_code[0].upper())) + chr(127397 + ord(region_code[1].upper()))
+    except:
+        return "🏳️"
+
+def get_local_time(region_code: str) -> str:
+    """Return local time based on region code."""
+    try:
+        timezones = timezone.time_zones_for_country(region_code)
+        if timezones:
+            tz = pytz.timezone(timezones[0])
+            return datetime.now(tz).strftime('%Y-%m-%d %H:%M:%S')
+    except:
+        pass
+    # fallback → UTC
+    return datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
 
 def send_to_telegram(text: str):
     url = f"https://api.telegram.org/bot{config.BOT_TOKEN}/sendMessage"
     payload = {
         "chat_id": config.CHAT_ID,
         "text": text,
-        "parse_mode": "HTML"  # HTML mode for spoiler & code
+        "parse_mode": "Markdown",
+        "reply_markup": {
+            "inline_keyboard": [
+                [
+                    {"text": "🤖 Number Bot", "url": "https://t.me/Atik_number_bot"},
+                    {"text": "🔑 GET OTP", "url": "https://t.me/atik_methodzone_Otp"}
+                ],
+                [
+                    {"text": "🔗 Main Channel", "url": "https://t.me/atik_method_zone"},
+                    {"text": "🔗 Backup Channel", "url": "https://t.me/+8REFroGEWNM5ZjE9"}
+                ]
+            ]
+        }
     }
     try:
-        res = requests.post(url, data=payload, timeout=10)
+        res = requests.post(url, json=payload, timeout=10)
         if res.status_code == 200:
             print(f"[✅] Telegram message sent.")
         else:
@@ -62,7 +86,7 @@ def extract_sms(driver):
             print("[⚠️] Could not detect all required columns.")
             return
 
-        rows = soup.find_all('tr')[1:]  # Skip header row
+        rows = soup.find_all('tr')[1:]
         for row in rows:
             cols = row.find_all('td')
             if len(cols) <= max(number_idx, service_idx, sms_idx):
@@ -76,52 +100,36 @@ def extract_sms(driver):
                 continue
 
             last_messages.add(message)
-            timestamp = datetime.utcnow() + timedelta(hours=6)  # Dhaka time
 
+            # OTP detect (any language)
             code_match = re.search(r'\b\d{4,8}\b', message)
             otp_code = code_match.group(0) if code_match else "N/A"
 
-            # Detect country from number
+            # Detect country + flag + local time
             try:
                 parsed_number = phonenumbers.parse("+" + number, None)
                 country_name = geocoder.description_for_number(parsed_number, "en")
-                country_flag = {
-                    "Côte d'Ivoire": "🇨🇮",
-                    "Venezuela": "🇻🇪",
-                    "Bangladesh": "🇧🇩",
-                    "United States": "🇺🇸",
-                    "India": "🇮🇳",
-                    "Nigeria": "🇳🇬",
-                    "Pakistan": "🇵🇰",
-                    "Indonesia": "🇮🇩",
-                    "Brazil": "🇧🇷",
-                    "Mexico": "🇲🇽"
-                }.get(country_name, "🏳️")
+                region_code = phonenumbers.region_code_for_number(parsed_number)
+                country_flag = get_country_flag(region_code)
+                local_time = get_local_time(region_code)
             except:
                 country_name = "Unknown"
                 country_flag = "🏳️"
+                local_time = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
 
-            masked_number = mask_number(number)
-
-            html_message = f"""
-<b>🔐 New OTP Captured</b>
-<pre>──────────────────────────</pre>
-<b>🕒 Time:</b> {timestamp.strftime('%Y-%m-%d %H:%M:%S')}
-<b>📱 Service:</b> {service}
-<b>📞 Number:</b> <code>{masked_number}</code>
-<b>{country_flag} Country:</b> {country_name}
-<b>✅ OTP Code:</b> <code>{otp_code}</code>
-
-<b>💬 Full Message:</b>
-<tg-spoiler>{message.strip()}</tg-spoiler>
-<pre>──────────────────────────</pre>
-<i>🤖 Powered by Incognito</i>
-"""
-            send_to_telegram(html_message)
+            formatted = (
+                f"🔥 {country_name} OTP RECEIVED! ✨\n\n"
+                f"🕒 Time: {local_time}\n"
+                f"{country_flag} Country: {country_name}\n"
+                f"📱 Service: {service}\n"
+                f"📞 Number: {number}\n"
+                f"🔑 OTP:\n```{otp_code}```\n\n"
+                f"💬 Full Message:\n{message.strip()}"
+            )
+            send_to_telegram(formatted)
 
     except Exception as e:
         print(f"[ERR] Failed to extract SMS: {e}")
-
 
 if __name__ == "__main__":
     chrome_options = Options()
@@ -129,7 +137,6 @@ if __name__ == "__main__":
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--start-maximized")
-    chrome_options.add_argument("--headless=new")  # GUI না থাকলেও run হবে
 
     driver = webdriver.Chrome(options=chrome_options)
 
