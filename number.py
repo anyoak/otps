@@ -306,7 +306,7 @@ def show_main_menu(chat_id, user_id):
     
     for country in countries:
         country_name = country[0]
-        btn = types.InlineKeyboardButton(f"🇺🇳 {country_name}", callback_data=f"country_{country_name}")
+        btn = types.InlineKeyboardButton(f" {country_name}", callback_data=f"country_{country_name}")
         markup.add(btn)
     
     if is_admin(user_id):
