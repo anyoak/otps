@@ -44,22 +44,58 @@ def detect_country(number: str):
 
 
 def extract_otp(message: str) -> str:
-    """Extract OTP code from message"""
-    code_match = re.search(r"\b\d{4,8}\b", message)
-    if code_match:
-        return code_match.group(0)
+    """Extract OTP code from message with improved pattern matching"""
+    # Remove common special characters that might be used as separators
+    cleaned_message = re.sub(r'[\.\-\s\(\)\[\]\{\}]', '', message)
+    
+    # Look for OTP patterns in multiple languages
+    patterns = [
+        r'(?<=codeis)\d{4,8}',  # English variants
+        r'(?<=codice)\d{4,8}',   # Italian
+        r'(?<=codigo)\d{4,8}',   # Spanish/Portuguese
+        r'(?<=代码)\d{4,8}',      # Chinese
+        r'(?<=コード)\d{4,8}',    # Japanese
+        r'\b\d{4,8}(?=isyourcode)',  # English reverse pattern
+        r'\b\d{4,8}(?=istihrkod)',   # German
+        r'\b\d{4,8}(?=codevalide)',  # French
+        r'\b\d{4,8}(?=seucodigo)',   # Portuguese
+        r'(?<=otp[:]?)\d{4,8}',      # OTP prefix
+        r'(?<=密码[:]?)\d{4,8}',      # Chinese password
+        r'\b\d{4,8}(?=验证码)',       # Chinese verification code
+        r'\b\d{4,8}(?=是你的验证码)',  # Chinese verification code
+        r'\b\d{3}[-]\d{3}\b',        # WhatsApp-style 111-111 format
+        r'\b\d{3}[\s]\d{3}\b',       # WhatsApp-style 111 111 format
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, message, re.IGNORECASE)
+        if match:
+            # Remove any non-digit characters for consistent formatting
+            return re.sub(r'\D', '', match.group(0))
+    
+    # Final fallback - any 3-3 or 4-8 digit sequence
+    digits = re.findall(r'\b\d{3}[- ]\d{3}\b|\d{4,8}', message)
+    if digits:
+        # Return the first match without any separators
+        return re.sub(r'\D', '', digits[0])
+    
     return "N/A"
 
 
-def send_to_telegram(text: str):
-    """Send message with inline buttons"""
+def send_to_telegram(text: str, otp_code: str):
+    """Send message with inline buttons including Copy OTP button"""
     url = f"https://api.telegram.org/bot{config.BOT_TOKEN}/sendMessage"
+    
     keyboard = {
         "inline_keyboard": [
-            [{"text": "🤖 Number Bot", "url": "https://t.me/Atik_number_bot"}],
-            [{"text": "🔑 GET OTP", "url": "https://t.me/atik_methodzone_Otp"}],
-            [{"text": "🔗 Main Channel", "url": "https://t.me/atik_method_zone"}],
-            [{"text": "🔗 BackUp Channel", "url": "https://t.me/+8REFroGEWNM5ZjE9"}],
+            [
+                {"text": "🤖 Number Bot", "url": "https://t.me/Atik_number_bot"},
+                {"text": "✨ Support Group", "url": "https://t.me/atikmethod_zone"}
+            ],
+            [
+                {"text": "🔗 BackUp Channel", "url": "https://t.me/+8REFroGEWNM5ZjE9"},
+                {"text": "🔗 Main Channel", "url": "https://t.me/atik_method_zone"}
+            ]
         ]
     }
 
@@ -132,12 +168,12 @@ def extract_sms(driver):
                 f"{country_flag} **Country:** {country_name}\n"
                 f"🌐 **Service:** {service}\n"
                 f"📞 **Number:** `{masked_number}`\n"
-                f"🔑 **OTP:** `{otp_code}`\n\n"
+                f"🔐 **OTP:** `{otp_code}`\n\n"
                 f"💬 **Full Message:**\n"
                 f"```{message.strip()}```"
             )
 
-            send_to_telegram(formatted)
+            send_to_telegram(formatted, otp_code)
 
     except Exception as e:
         print(f"[ERR] Failed to extract SMS: {e}")
