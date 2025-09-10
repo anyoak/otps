@@ -17,7 +17,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Bot configuration
-API_TOKEN = "8428320400:AAFPQ38hw2yeEEsyWPMkheUKrSr0a-FW3JQ"
+API_TOKEN = "8428320400:AAFeExw8eyMiFv-l2TiHXaILKBzc_rBhMcM"
 ADMIN_IDS = [7868585904, 6577308099]
 MAIN_CHANNEL = '@atik_method_zone'
 BACKUP_CHANNEL = '-1003096164193'
