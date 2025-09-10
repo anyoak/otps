@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 # ------------------------------
 # Bot configuration
 # ------------------------------
-API_TOKEN = "8428320400:AAEjb2Y26wLBKn-6iJByW3SwNssyfF6retM"
+API_TOKEN = "7761017364:AAHJctEP7Jm6v1IvzqmJ_Oabs4Ldglewk2w"
 ADMIN_IDS = [7868585904, 6577308099]
 MAIN_CHANNEL = '@atik_method_zone'
 BACKUP_CHANNEL = '-1003096164193'
