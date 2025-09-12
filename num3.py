@@ -4,6 +4,7 @@ import time
 import os
 import csv
 import re
+import threading
 from datetime import datetime, timedelta
 from threading import Thread
 import telebot
@@ -29,45 +30,47 @@ if ':' not in API_TOKEN:
 
 bot = telebot.TeleBot(API_TOKEN, threaded=True, num_threads=4)
 
-# Database setup with connection pooling
+# Database setup with connection pooling and thread safety
 class Database:
     _instance = None
     _connection = None
+    _lock = threading.RLock()  # Add a lock for thread safety
     
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(Database, cls).__new__(cls)
-            cls._connection = sqlite3.connect('numbers.db', check_same_thread=False)
+            cls._connection = sqlite3.connect('numbers.db', check_same_thread=False, timeout=30)
             cls._connection.row_factory = sqlite3.Row
             cls.init_db()
         return cls._instance
     
     @classmethod
     def init_db(cls):
-        c = cls._connection.cursor()
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS users
-                     (user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT, 
-                     last_name TEXT, join_date TEXT, is_banned INTEGER DEFAULT 0)''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS numbers
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT, country TEXT, number TEXT UNIQUE, 
-                     is_used INTEGER DEFAULT 0, used_by INTEGER, use_date TEXT)''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS countries
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, code TEXT)''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS user_stats
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, date TEXT, 
-                     numbers_today INTEGER DEFAULT 0)''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS cooldowns
-                     (user_id INTEGER PRIMARY KEY, timestamp INTEGER)''')
-        
-        c.execute('''CREATE TABLE IF NOT EXISTS notifications
-                     (id INTEGER PRIMARY KEY AUTOINCREMENT, country TEXT, notified INTEGER DEFAULT 0)''')
-        
-        cls._connection.commit()
+        with cls._lock:
+            c = cls._connection.cursor()
+            
+            c.execute('''CREATE TABLE IF NOT EXISTS users
+                         (user_id INTEGER PRIMARY KEY, username TEXT, first_name TEXT, 
+                         last_name TEXT, join_date TEXT, is_banned INTEGER DEFAULT 0)''')
+            
+            c.execute('''CREATE TABLE IF NOT EXISTS numbers
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT, country TEXT, number TEXT UNIQUE, 
+                         is_used INTEGER DEFAULT 0, used_by INTEGER, use_date TEXT)''')
+            
+            c.execute('''CREATE TABLE IF NOT EXISTS countries
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, code TEXT)''')
+            
+            c.execute('''CREATE TABLE IF NOT EXISTS user_stats
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, date TEXT, 
+                         numbers_today INTEGER DEFAULT 0)''')
+            
+            c.execute('''CREATE TABLE IF NOT EXISTS cooldowns
+                         (user_id INTEGER PRIMARY KEY, timestamp INTEGER)''')
+            
+            c.execute('''CREATE TABLE IF NOT EXISTS notifications
+                         (id INTEGER PRIMARY KEY AUTOINCREMENT, country TEXT, notified INTEGER DEFAULT 0)''')
+            
+            cls._connection.commit()
     
     @classmethod
     def get_connection(cls):
@@ -75,23 +78,36 @@ class Database:
     
     @classmethod
     def execute(cls, query, params=()):
-        try:
-            c = cls._connection.cursor()
-            c.execute(query, params)
-            cls._connection.commit()
-            return c
-        except sqlite3.Error as e:
-            logger.error(f"Database error: {e}")
+        with cls._lock:  # Use lock to prevent concurrent access
             try:
-                cls._connection = sqlite3.connect('numbers.db', check_same_thread=False)
-                cls._connection.row_factory = sqlite3.Row
                 c = cls._connection.cursor()
                 c.execute(query, params)
                 cls._connection.commit()
                 return c
-            except sqlite3.Error as e2:
-                logger.error(f"Database reconnection failed: {e2}")
-                raise e2
+            except sqlite3.Error as e:
+                logger.error(f"Database error: {e}")
+                try:
+                    # Try to reconnect if there's an error
+                    cls._connection = sqlite3.connect('numbers.db', check_same_thread=False, timeout=30)
+                    cls._connection.row_factory = sqlite3.Row
+                    c = cls._connection.cursor()
+                    c.execute(query, params)
+                    cls._connection.commit()
+                    return c
+                except sqlite3.Error as e2:
+                    logger.error(f"Database reconnection failed: {e2}")
+                    # Wait and retry once more
+                    time.sleep(1)
+                    try:
+                        cls._connection = sqlite3.connect('numbers.db', check_same_thread=False, timeout=30)
+                        cls._connection.row_factory = sqlite3.Row
+                        c = cls._connection.cursor()
+                        c.execute(query, params)
+                        cls._connection.commit()
+                        return c
+                    except sqlite3.Error as e3:
+                        logger.error(f"Database final reconnection failed: {e3}")
+                        raise e3
 
 # Initialize database
 db = Database()
@@ -589,9 +605,22 @@ def process_callback(call):
             return
         
         country = call.data.split("_")[2]
-        db.execute("DELETE FROM numbers WHERE country = ?", (country,))
         
-        bot.send_message(chat_id, f"✅ All numbers for {country} have been removed.")
+        # Use a retry mechanism for database operations
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                db.execute("DELETE FROM numbers WHERE country = ?", (country,))
+                bot.send_message(chat_id, f"✅ All numbers for {country} have been removed.")
+                break
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e) and attempt < max_retries - 1:
+                    logger.warning(f"Database locked, retrying {attempt + 1}/{max_retries}")
+                    time.sleep(1)  # Wait before retrying
+                else:
+                    logger.error(f"Failed to delete numbers after {max_retries} attempts: {e}")
+                    bot.send_message(chat_id, f"❌ Error deleting numbers for {country}. Please try again.")
+                    break
         return
     
     if call.data == "cancel_remove":
