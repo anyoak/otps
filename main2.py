@@ -1,35 +1,29 @@
 import time
 import config  # Make sure config.LOGIN_URL exists
 from selenium import webdriver
-from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from forwarder import extract_sms  # Your custom module
 
-def wait_for_login(driver, timeout=300):
+def wait_for_main_page(driver, timeout=300):
     """
-    Wait for manual login. Checks every 2 seconds.
+    Wait until the current URL becomes https://beta.full-sms.com
     """
-    print("[*] Waiting for manual login...")
+    print(f"[*] Waiting up to {timeout} seconds for main page...")
     start = time.time()
     while time.time() - start < timeout:
         time.sleep(2)
         try:
-            # Check for logout button or unique SMS page element
-            if "Logout" in driver.page_source or "logout" in driver.page_source:
-                print("[✅] Login detected!")
+            current_url = driver.current_url
+            if current_url == "https://beta.full-sms.com" or current_url == "https://beta.full-sms.com/":
+                print("[✅] Main page detected!")
                 return True
         except Exception as e:
-            print(f"[⚠️] Page check failed: {e}")
-    print("[❌] Login timeout!")
+            print(f"[⚠️] URL check failed: {e}")
+    print("[❌] Main page not detected within timeout!")
     return False
 
 def launch_browser():
-    """
-    Launch Chrome with options to reduce logging noise.
-    """
-    print("[*] Launching Chrome browser...")
-
     chrome_options = Options()
     chrome_options.add_argument("--disable-extensions")
     chrome_options.add_argument("--disable-gpu")
@@ -38,10 +32,9 @@ def launch_browser():
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-notifications")
     chrome_options.add_experimental_option("excludeSwitches", ["enable-logging"])
-    # Uncomment to run headless
-    # chrome_options.add_argument("--headless=new")
+    # chrome_options.add_argument("--headless=new")  # Optional
 
-    service = Service()  # Add executable_path="path/to/chromedriver" if needed
+    service = Service()  # Add executable_path if needed
     driver = webdriver.Chrome(service=service, options=chrome_options)
     return driver
 
@@ -49,19 +42,18 @@ def main():
     driver = launch_browser()
     driver.get(config.LOGIN_URL)  # Open login page
 
-    # Wait for manual login
-    if not wait_for_login(driver):
+    # Wait for main page after login
+    if not wait_for_main_page(driver, timeout=300):
         driver.quit()
         return
 
-    # Go to SMS stats page
+    # Open SMS page
     driver.get("https://beta.full-sms.com/stats")
-    print("[*] Navigated to SMS stats page. Starting monitoring...")
+    print("[*] SMS page opened. Starting monitoring...")
 
     try:
         while True:
             try:
-                # Your custom function to extract SMS
                 extract_sms(driver)
                 time.sleep(2)
             except Exception as e:
