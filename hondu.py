@@ -1,52 +1,35 @@
 import time
 import re
 import requests
-from bs4 import BeautifulSoup
-from datetime import datetime
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-import phonenumbers
-from phonenumbers import geocoder, region_code_for_number
-import pycountry
-
-import config  # BOT_TOKEN, CHAT_ID, SMS_URL
-
-# Cache for sent messagesimport time
-import re
-import requests
 from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 import phonenumbers
 from phonenumbers import geocoder, region_code_for_number
 import pycountry
 import config  # BOT_TOKEN, CHAT_ID, SMS_URL
 
-# Cache for sent messages to avoid duplicates
+# Store sent messages to prevent duplicates
 last_messages = set()
 
-
 def mask_number(number: str) -> str:
-    """Mask phone number middle digits"""
     digits = re.sub(r"\D", "", number)
     if len(digits) > 6:
         return digits[:4] + "***" + digits[-3:]
     return number
 
-
 def country_to_flag(country_code: str) -> str:
-    """Convert ISO country code to emoji flag"""
     if not country_code or len(country_code) != 2:
         return "🏳️"
     return "".join(chr(127397 + ord(c)) for c in country_code.upper())
 
-
 def detect_country(number: str):
-    """Detect country name + flag from phone number"""
     try:
         parsed_number = phonenumbers.parse("+" + number, None)
-        region = region_code_for_number(parsed_number)
+        region = geocoder.region_code_for_number(parsed_number)
         country = pycountry.countries.get(alpha_2=region)
         if country:
             return country.name, country_to_flag(region)
@@ -54,38 +37,23 @@ def detect_country(number: str):
         pass
     return "Unknown", "🏳️"
 
-
 def extract_otp(message: str) -> str:
-    """Extract OTP code from message with multiple regex patterns"""
-    patterns = [
-        r'\b\d{3}-\d{3}\b',   # 111-111 format
-        r'\b\d{3} \d{3}\b',   # 111 111 format
-        r'\b\d{6}\b',         # 6-digit
-        r'\b\d{4}\b',         # 4-digit
-        r'\b\d{5}\b',         # 5-digit
-        r'\b\d{7}\b',         # 7-digit
-        r'\b\d{8}\b',         # 8-digit
-    ]
+    patterns = [r'\b\d{3}-\d{3}\b', r'\b\d{3} \d{3}\b', r'\b\d{6}\b',
+                r'\b\d{4}\b', r'\b\d{5}\b', r'\b\d{7}\b', r'\b\d{8}\b']
     for pattern in patterns:
         match = re.search(pattern, message)
         if match:
             return re.sub(r'\D', '', match.group(0))
     return "N/A"
 
-
 def send_to_telegram(text: str):
-    """Send message to Telegram group with inline buttons"""
     url = f"https://api.telegram.org/bot{config.BOT_TOKEN}/sendMessage"
     keyboard = {
         "inline_keyboard": [
-            [
-                {"text": "🤖 Number Buy", "url": "https://t.me/atik203412"},
-                {"text": "✨ Support Group", "url": "https://t.me/atikmethod_zone"}
-            ],
-            [
-                {"text": "🔗 Main Channel", "url": "https://t.me/atik_method_zone"},
-                {"text": "🔗 Backup Channel", "url": "https://t.me/+8REFroGEWNM5ZjE9"}
-            ]
+            [{"text": "🤖 Number Buy", "url": "https://t.me/atik203412"},
+             {"text": "✨ Support Group", "url": "https://t.me/atikmethod_zone"}],
+            [{"text": "🔗 Main Channel", "url": "https://t.me/atik_method_zone"},
+             {"text": "🔗 Backup Channel", "url": "https://t.me/+8REFroGEWNM5ZjE9"}]
         ]
     }
     payload = {
@@ -103,38 +71,61 @@ def send_to_telegram(text: str):
     except requests.exceptions.RequestException as e:
         print(f"[❌] Telegram request error: {e}")
 
+def detect_columns(header_row):
+    """Detect column indices dynamically"""
+    mapping = {"number": None, "sender": None, "message": None}
+    cells = header_row.find_elements(By.CSS_SELECTOR, "div[role='columnheader'], div[role='cell']")
+    for idx, cell in enumerate(cells):
+        text = cell.text.lower()
+        if any(k in text for k in ["number", "phone", "mobile"]):
+            mapping["number"] = idx
+        elif any(k in text for k in ["sender", "from", "user"]):
+            mapping["sender"] = idx
+        elif any(k in text for k in ["message", "text", "otp"]):
+            mapping["message"] = idx
+    return mapping
 
 def extract_sms(driver):
-    """Extract new SMS messages using Selenium for JS-rendered table"""
+    """Extract all new SMS messages"""
     global last_messages
     try:
-        driver.get(config.SMS_URL)
-        driver.implicitly_wait(5)  # wait for JS to render table
+        scrollable_div = WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "div[role='grid']"))
+        )
 
-        # Scroll table to load more rows if necessary
-        scrollable_div = driver.find_element(By.CSS_SELECTOR, "div[role='grid']")  # adjust if needed
-        driver.execute_script("arguments[0].scrollTop = arguments[0].scrollHeight", scrollable_div)
-        time.sleep(2)
+        # Scroll to load all rows
+        last_height = driver.execute_script("return arguments[0].scrollHeight", scrollable_div)
+        while True:
+            driver.execute_script("arguments[0].scrollTop = arguments[0].scrollHeight", scrollable_div)
+            time.sleep(2)
+            new_height = driver.execute_script("return arguments[0].scrollHeight", scrollable_div)
+            if new_height == last_height:
+                break
+            last_height = new_height
 
-        # Find all rows
-        rows = driver.find_elements(By.CSS_SELECTOR, "div[role='row']")  # adjust according to panel
+        rows = scrollable_div.find_elements(By.CSS_SELECTOR, "div[role='row']")
         if not rows:
-            print("[⚠️] No rows found. Make sure the table is rendered.")
+            print("[⚠️] No rows found.")
             return
 
-        for row in rows:
-            try:
-                number = row.find_element(By.CSS_SELECTOR, "div[data-column-id='4']").text.strip()
-                sender = row.find_element(By.CSS_SELECTOR, "div[data-column-id='6']").text.strip()
-                message = row.find_element(By.CSS_SELECTOR, "div[data-column-id='7']").text.strip()
-            except:
-                continue  # Skip rows that don't have all columns
+        # Detect columns dynamically
+        mapping = detect_columns(rows[0])
+
+        new_messages_count = 0
+        for row in rows[1:]:
+            cells = row.find_elements(By.CSS_SELECTOR, "div[role='cell']")
+            if len(cells) < 3:
+                continue
+
+            number = cells[mapping["number"]].text.strip() if mapping["number"] is not None else cells[0].text.strip()
+            sender = cells[mapping["sender"]].text.strip() if mapping["sender"] is not None else cells[1].text.strip()
+            message = cells[mapping["message"]].text.strip() if mapping["message"] is not None else cells[2].text.strip()
 
             if not message or message in last_messages:
                 continue
             last_messages.add(message)
+            new_messages_count += 1
 
-            # Format and send
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             otp_code = extract_otp(message)
             country_name, country_flag = detect_country(number)
@@ -150,12 +141,15 @@ def extract_sms(driver):
                 f"💬 **Full Message:**\n"
                 f"```{message}```"
             )
-
             send_to_telegram(formatted)
+
+        if new_messages_count:
+            print(f"[ℹ️] {new_messages_count} new messages sent to Telegram.")
+        else:
+            print("[ℹ️] No new messages.")
 
     except Exception as e:
         print(f"[ERR] Failed to extract SMS: {e}")
-
 
 if __name__ == "__main__":
     chrome_options = Options()
@@ -171,9 +165,12 @@ if __name__ == "__main__":
 
     try:
         print("[*] SMS Extractor running. Press Ctrl+C to stop.")
+        driver.get(config.SMS_URL)  # open once
+
         while True:
             extract_sms(driver)
-            time.sleep(10)  # refresh every 10s
+            time.sleep(10)  # check every 10 seconds
+
     except KeyboardInterrupt:
         print("\n[🛑] Stopped by user.")
     finally:
