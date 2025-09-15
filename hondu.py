@@ -12,7 +12,7 @@ from phonenumbers import geocoder, region_code_for_number
 import pycountry
 import config  # BOT_TOKEN, CHAT_ID, SMS_URL
 
-# Store sent messages to prevent duplicates
+# Cache for sent messages
 last_messages = set()
 
 def mask_number(number: str) -> str:
@@ -72,28 +72,31 @@ def send_to_telegram(text: str):
         print(f"[❌] Telegram request error: {e}")
 
 def detect_columns(header_row):
-    """Detect column indices dynamically"""
-    mapping = {"number": None, "sender": None, "message": None}
-    cells = header_row.find_elements(By.CSS_SELECTOR, "div[role='columnheader'], div[role='cell']")
-    for idx, cell in enumerate(cells):
-        text = cell.text.lower()
-        if any(k in text for k in ["number", "phone", "mobile"]):
-            mapping["number"] = idx
-        elif any(k in text for k in ["sender", "from", "user"]):
-            mapping["sender"] = idx
-        elif any(k in text for k in ["message", "text", "otp"]):
-            mapping["message"] = idx
+    """Detect number, sender, message column dynamically"""
+    mapping = {"number": 0, "sender": 1, "message": 2}  # default fallback
+    try:
+        cells = header_row.find_elements(By.CSS_SELECTOR, "div[role='columnheader'], div[role='cell']")
+        for idx, cell in enumerate(cells):
+            text = cell.text.lower()
+            if any(k in text for k in ["number", "phone", "mobile"]):
+                mapping["number"] = idx
+            elif any(k in text for k in ["sender", "from", "user"]):
+                mapping["sender"] = idx
+            elif any(k in text for k in ["message", "text", "otp"]):
+                mapping["message"] = idx
+    except Exception:
+        pass
     return mapping
 
 def extract_sms(driver):
-    """Extract all new SMS messages"""
+    """Extract SMS safely"""
     global last_messages
     try:
         scrollable_div = WebDriverWait(driver, 15).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "div[role='grid']"))
         )
 
-        # Scroll to load all rows
+        # Scroll to load all messages
         last_height = driver.execute_script("return arguments[0].scrollHeight", scrollable_div)
         while True:
             driver.execute_script("arguments[0].scrollTop = arguments[0].scrollHeight", scrollable_div)
@@ -103,50 +106,51 @@ def extract_sms(driver):
                 break
             last_height = new_height
 
+        # Re-fetch rows after scrolling
         rows = scrollable_div.find_elements(By.CSS_SELECTOR, "div[role='row']")
         if not rows:
             print("[⚠️] No rows found.")
             return
 
-        # Detect columns dynamically
         mapping = detect_columns(rows[0])
+        new_count = 0
 
-        new_messages_count = 0
         for row in rows[1:]:
-            cells = row.find_elements(By.CSS_SELECTOR, "div[role='cell']")
-            if len(cells) < 3:
-                continue
+            try:
+                cells = row.find_elements(By.CSS_SELECTOR, "div[role='cell']")
+                if len(cells) < 3:
+                    continue
 
-            number = cells[mapping["number"]].text.strip() if mapping["number"] is not None else cells[0].text.strip()
-            sender = cells[mapping["sender"]].text.strip() if mapping["sender"] is not None else cells[1].text.strip()
-            message = cells[mapping["message"]].text.strip() if mapping["message"] is not None else cells[2].text.strip()
+                number = cells[mapping["number"]].text.strip()
+                sender = cells[mapping["sender"]].text.strip()
+                message = cells[mapping["message"]].text.strip()
 
-            if not message or message in last_messages:
-                continue
-            last_messages.add(message)
-            new_messages_count += 1
+                if not message or message in last_messages:
+                    continue
+                last_messages.add(message)
+                new_count += 1
 
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            otp_code = extract_otp(message)
-            country_name, country_flag = detect_country(number)
-            masked_number = mask_number(number)
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                otp_code = extract_otp(message)
+                country_name, country_flag = detect_country(number)
+                masked_number = mask_number(number)
 
-            formatted = (
-                f"🔥 **New OTP Captured! ({sender}) {country_flag}**\n\n"
-                f"🕒 **Time:** {timestamp}\n"
-                f"{country_flag} **Country:** {country_name}\n"
-                f"🌐 **Sender:** {sender}\n"
-                f"📞 **Number:** `{masked_number}`\n"
-                f"🔐 **OTP:** `{otp_code}`\n\n"
-                f"💬 **Full Message:**\n"
-                f"```{message}```"
-            )
-            send_to_telegram(formatted)
+                formatted = (
+                    f"🔥 **New OTP Captured! ({sender}) {country_flag}**\n\n"
+                    f"🕒 **Time:** {timestamp}\n"
+                    f"{country_flag} **Country:** {country_name}\n"
+                    f"🌐 **Sender:** {sender}\n"
+                    f"📞 **Number:** `{masked_number}`\n"
+                    f"🔐 **OTP:** `{otp_code}`\n\n"
+                    f"💬 **Full Message:**\n"
+                    f"```{message}```"
+                )
+                send_to_telegram(formatted)
 
-        if new_messages_count:
-            print(f"[ℹ️] {new_messages_count} new messages sent to Telegram.")
-        else:
-            print("[ℹ️] No new messages.")
+            except Exception:
+                continue  # ignore row errors
+
+        print(f"[ℹ️] {new_count} new messages processed.")
 
     except Exception as e:
         print(f"[ERR] Failed to extract SMS: {e}")
@@ -156,17 +160,17 @@ if __name__ == "__main__":
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-software-rasterizer")
     chrome_options.add_argument("--start-maximized")
     chrome_options.add_argument("--disable-notifications")
     chrome_options.add_experimental_option("excludeSwitches", ["enable-logging"])
     # chrome_options.add_argument("--headless=new")  # optional
 
     driver = webdriver.Chrome(options=chrome_options)
+    driver.get(config.SMS_URL)
 
     try:
         print("[*] SMS Extractor running. Press Ctrl+C to stop.")
-        driver.get(config.SMS_URL)  # open once
-
         while True:
             extract_sms(driver)
             time.sleep(10)  # check every 10 seconds
