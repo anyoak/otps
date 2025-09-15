@@ -11,7 +11,19 @@ import pycountry
 
 import config  # BOT_TOKEN, CHAT_ID, SMS_URL
 
-# Cache for sent messages
+# Cache for sent messagesimport time
+import re
+import requests
+from datetime import datetime
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+import phonenumbers
+from phonenumbers import geocoder, region_code_for_number
+import pycountry
+import config  # BOT_TOKEN, CHAT_ID, SMS_URL
+
+# Cache for sent messages to avoid duplicates
 last_messages = set()
 
 
@@ -93,33 +105,36 @@ def send_to_telegram(text: str):
 
 
 def extract_sms(driver):
-    """Extract new SMS messages from the target website"""
+    """Extract new SMS messages using Selenium for JS-rendered table"""
     global last_messages
     try:
         driver.get(config.SMS_URL)
+        driver.implicitly_wait(5)  # wait for JS to render table
+
+        # Scroll table to load more rows if necessary
+        scrollable_div = driver.find_element(By.CSS_SELECTOR, "div[role='grid']")  # adjust if needed
+        driver.execute_script("arguments[0].scrollTop = arguments[0].scrollHeight", scrollable_div)
         time.sleep(2)
-        soup = BeautifulSoup(driver.page_source, "html.parser")
 
-        rows = soup.find_all("tr")[1:]  # skip header
+        # Find all rows
+        rows = driver.find_elements(By.CSS_SELECTOR, "div[role='row']")  # adjust according to panel
+        if not rows:
+            print("[⚠️] No rows found. Make sure the table is rendered.")
+            return
+
         for row in rows:
-            cols = row.find_all("div", class_="sc-cwHptR")  # match panel column divs
-            number = sender = message = "Unknown"
-
-            for col in cols:
-                data_id = col.get("data-column-id")
-                text = col.get_text(strip=True)
-                if data_id == "4":
-                    number = text
-                elif data_id == "6":
-                    sender = text
-                elif data_id == "7":
-                    message = text
+            try:
+                number = row.find_element(By.CSS_SELECTOR, "div[data-column-id='4']").text.strip()
+                sender = row.find_element(By.CSS_SELECTOR, "div[data-column-id='6']").text.strip()
+                message = row.find_element(By.CSS_SELECTOR, "div[data-column-id='7']").text.strip()
+            except:
+                continue  # Skip rows that don't have all columns
 
             if not message or message in last_messages:
                 continue
             last_messages.add(message)
 
-            # Formatting
+            # Format and send
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             otp_code = extract_otp(message)
             country_name, country_flag = detect_country(number)
@@ -133,7 +148,7 @@ def extract_sms(driver):
                 f"📞 **Number:** `{masked_number}`\n"
                 f"🔐 **OTP:** `{otp_code}`\n\n"
                 f"💬 **Full Message:**\n"
-                f"```{message.strip()}```"
+                f"```{message}```"
             )
 
             send_to_telegram(formatted)
@@ -148,7 +163,9 @@ if __name__ == "__main__":
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--start-maximized")
-    # chrome_options.add_argument("--headless=new")  # Optional
+    chrome_options.add_argument("--disable-notifications")
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-logging"])
+    # chrome_options.add_argument("--headless=new")  # optional
 
     driver = webdriver.Chrome(options=chrome_options)
 
