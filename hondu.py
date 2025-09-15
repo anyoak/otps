@@ -99,44 +99,28 @@ def extract_sms(driver):
         driver.get(config.SMS_URL)
         time.sleep(2)
         soup = BeautifulSoup(driver.page_source, "html.parser")
-        headers = soup.find_all("th")
-
-        number_idx = sender_idx = sms_idx = None
-        for idx, th in enumerate(headers):
-            label = th.get("aria-label", "").lower()
-            if "number" in label:
-                number_idx = idx
-            elif "sender" in label:
-                sender_idx = idx
-            elif "message" in label:
-                sms_idx = idx
-
-        if None in (number_idx, sender_idx, sms_idx):
-            print("[⚠️] Could not detect required columns.")
-            return
 
         rows = soup.find_all("tr")[1:]  # skip header
         for row in rows:
-            cols = row.find_all("td")
-            if len(cols) <= max(number_idx, sender_idx, sms_idx):
-                continue
+            cols = row.find_all("div", class_="sc-cwHptR")  # match panel column divs
+            number = sender = message = "Unknown"
 
-            number = cols[number_idx].get_text(strip=True) or "Unknown"
-            sender = cols[sender_idx].get_text(strip=True) or "Unknown"
-            message = cols[sms_idx].get_text(strip=True)
+            for col in cols:
+                data_id = col.get("data-column-id")
+                text = col.get_text(strip=True)
+                if data_id == "4":
+                    number = text
+                elif data_id == "6":
+                    sender = text
+                elif data_id == "7":
+                    message = text
 
             if not message or message in last_messages:
                 continue
-            if message.strip() in ("0", "Unknown") or (
-                number in ("0", "Unknown") and sender in ("0", "Unknown")
-            ):
-                continue
-
             last_messages.add(message)
 
-            # Use local system time
+            # Formatting
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
             otp_code = extract_otp(message)
             country_name, country_flag = detect_country(number)
             masked_number = mask_number(number)
@@ -164,8 +148,7 @@ if __name__ == "__main__":
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--start-maximized")
-    # Uncomment to run headless in background
-    # chrome_options.add_argument("--headless=new")
+    # chrome_options.add_argument("--headless=new")  # Optional
 
     driver = webdriver.Chrome(options=chrome_options)
 
