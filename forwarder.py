@@ -82,7 +82,7 @@ def send_to_telegram(text: str):
     keyboard = {
         "inline_keyboard": [
             [
-                {"text": "🤖 Number Bot", "url": "https://t.me/Atik_number_bot"},
+                {"text": "🤖 Number Buy", "url": "https://t.me/Atik203412"},
                 {"text": "✨ Support Group", "url": "https://t.me/atikmethod_zone"}
             ],
             [
