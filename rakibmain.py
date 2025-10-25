@@ -3,8 +3,6 @@ import re
 import requests
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
 import phonenumbers
 from phonenumbers import geocoder, region_code_for_number
 import pycountry
@@ -45,7 +43,7 @@ def mask_number(number: str) -> str:
 def country_to_flag(country_code: str) -> str:
     """Convert ISO country code to emoji flag"""
     if not country_code or len(country_code) != 2:
-        return "🇺🇳"
+        return "🏳️"
     return "".join(chr(127397 + ord(c)) for c in country_code.upper())
 
 def detect_country(number: str):
@@ -58,7 +56,7 @@ def detect_country(number: str):
             return country.name, country_to_flag(region)
     except:
         pass
-    return "Unknown", "🇺🇳"
+    return "Unknown", "🏳️"
 
 def extract_otp(message: str) -> str:
     """Extract OTP code from message with improved pattern matching"""
@@ -90,9 +88,9 @@ def extract_otp(message: str) -> str:
     
     return "N/A"
 
-def create_message_hash(number: str, message: str, timestamp: str = "") -> str:
+def create_message_hash(number: str, message: str, date_text: str = "") -> str:
     """Create unique hash for message to avoid duplicates"""
-    content = f"{number}_{message.strip()}_{timestamp}"
+    content = f"{number}_{message.strip()}_{date_text}"
     return hashlib.md5(content.encode()).hexdigest()
 
 def send_to_telegram(number, country_name, country_flag, service, masked_number, otp_code, message, timestamp):
@@ -110,12 +108,12 @@ def send_to_telegram(number, country_name, country_flag, service, masked_number,
     }
 
     formatted = (
-        f"{country_flag} {country_name} {service.upper()} RECEIVED \n"
-        f"⏰ Time: {timestamp.strftime('%Y-%m-%d %H:%M:%S')}\n"
-        f"🌍 Country: {country_name} {country_flag}\n"
-        f"⚙️ Service: {service.upper()}\n"
-        f"☎️ Number: {masked_number}\n\n"
-        f"🔑 OTP: {otp_code}\n\n"
+        f"{country_flag} **{country_name} {service.upper()} OTP RECEIVED** \n"
+        f"⏰ **Time:** {timestamp.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"🌍 **Country:** {country_name} {country_flag}\n"
+        f"⚙️ **Service:** {service.upper()}\n"
+        f"☎️ **Number:** `{masked_number}`\n\n"
+        f"🔑 **OTP:** `{otp_code}`\n\n"
         f"📩 Full Message:\n"
         f"```{message.strip()}```"
     )
@@ -139,12 +137,19 @@ def send_to_telegram(number, country_name, country_flag, service, masked_number,
         print(f"[❌] Telegram request error: {e}")
         return False
 
-def extract_sms(driver, sent_messages_cache):
-    """Extract SMS with improved duplicate detection"""
+def extract_sms(driver):
+    """Extract SMS with improved duplicate detection - compatible with main.py"""
+    
+    # Load cache at the beginning of each extraction
+    sent_messages_cache = load_cache()
+    cache_updated = False
+    new_messages_count = 0
     
     try:
-        driver.get(config.SMS_URL)
-        time.sleep(3)
+        # Navigate to SMS URL if not already there
+        if driver.current_url != config.SMS_URL:
+            driver.get(config.SMS_URL)
+            time.sleep(3)
         
         # Refresh for latest messages
         driver.refresh()
@@ -155,7 +160,7 @@ def extract_sms(driver, sent_messages_cache):
         
         if not table:
             print("[⚠️] Could not find SMS table.")
-            return sent_messages_cache, False
+            return
 
         # Get column indices
         headers = table.find_all('th')
@@ -175,12 +180,10 @@ def extract_sms(driver, sent_messages_cache):
         required_columns = ['number', 'service', 'sms']
         if not all(col in column_indices for col in required_columns):
             print(f"[⚠️] Missing required columns. Found: {list(column_indices.keys())}")
-            return sent_messages_cache, False
+            return
 
         # Process rows
         rows = table.find_all('tr')[1:]
-        cache_updated = False
-        new_messages_count = 0
         
         for row in rows:
             cols = row.find_all('td')
@@ -212,7 +215,7 @@ def extract_sms(driver, sent_messages_cache):
             otp_code = extract_otp(message)
             country_name, country_flag = detect_country(number)
             masked_number = mask_number(number)
-            timestamp = datetime.utcnow() + timedelta(hours=6)
+            timestamp = datetime.utcnow() + timedelta(hours=config.TIMEZONE_OFFSET)
             
             # Send to Telegram
             success = send_to_telegram(
@@ -232,76 +235,20 @@ def extract_sms(driver, sent_messages_cache):
             time.sleep(1)  # Rate limiting
         
         if new_messages_count > 0:
-            print(f"[📊] {new_messages_count} new messages processed")
-        
-        return sent_messages_cache, cache_updated
+            print(f"[📊] {new_messages_count} new messages processed and sent to Telegram")
+            # Save cache if new messages were processed
+            save_cache(sent_messages_cache)
+        else:
+            print("[📊] No new messages found")
         
     except Exception as e:
         print(f"[ERR] Failed to extract SMS: {e}")
-        return sent_messages_cache, False
 
-def cleanup_old_cache(cache):
-    """Clean up old cache entries"""
+def cleanup_old_cache():
+    """Clean up old cache entries - called separately if needed"""
+    cache = load_cache()
     if len(cache) > 1000:
         # Convert to list, keep last 500, convert back to set
         new_cache = set(list(cache)[-500:])
+        save_cache(new_cache)
         print(f"[🧹] Cleaned up cache: {len(cache)} -> {len(new_cache)}")
-        return new_cache
-    return cache
-
-if __name__ == "__main__":
-    # Load existing cache
-    sent_messages_cache = load_cache()
-    print(f"[📁] Loaded {len(sent_messages_cache)} previously sent messages from cache")
-    
-    chrome_options = Options()
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--start-maximized")
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    chrome_options.add_experimental_option('useAutomationExtension', False)
-    
-    # chrome_options.add_argument("--headless=new")
-    
-    driver = webdriver.Chrome(options=chrome_options)
-    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-
-    try:
-        print("[*] 🚀 Smart SMS Extractor Started!")
-        print("[*] 📱 Monitoring for NEW messages only...")
-        print("[*] ⏰ Press Ctrl+C to stop.")
-        
-        processed_count = 0
-        
-        while True:
-            # Process messages and get updated cache
-            sent_messages_cache, cache_updated = extract_sms(driver, sent_messages_cache)
-            
-            # Save cache if updated
-            if cache_updated:
-                save_cache(sent_messages_cache)
-                print("[💾] Cache saved to file")
-            
-            processed_count += 1
-            
-            # Cleanup cache periodically
-            if processed_count % 10 == 0:
-                old_size = len(sent_messages_cache)
-                sent_messages_cache = cleanup_old_cache(sent_messages_cache)
-                if len(sent_messages_cache) != old_size:
-                    save_cache(sent_messages_cache)
-            
-            time.sleep(5)
-            
-    except KeyboardInterrupt:
-        print("\n[🛑] Stopped by user.")
-    except Exception as e:
-        print(f"\n[💥] Unexpected error: {e}")
-    finally:
-        # Save cache before exiting
-        save_cache(sent_messages_cache)
-        driver.quit()
-        print("[*] Browser closed.")
-        print(f"[📊] Total unique messages in cache: {len(sent_messages_cache)}")
