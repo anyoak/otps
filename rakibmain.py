@@ -92,7 +92,7 @@ def extract_sms(driver):
         driver.get(config.SMS_URL)
         time.sleep(2)
         soup = BeautifulSoup(driver.page_source, "html.parser")
-        table = soup.find("table")
+        table = soup.find("table", {"id": "dt"})
         if not table:
             print("[⚠️] SMS table not found")
             return
@@ -127,7 +127,6 @@ def extract_sms(driver):
 
             last_messages.add(message)
             timestamp = datetime.utcnow() + timedelta(hours=config.TIMEZONE_OFFSET)
-
             otp = extract_otp(message)
             country, flag = detect_country(number)
             masked = mask_number(number)
@@ -148,6 +147,55 @@ def extract_sms(driver):
     except Exception as e:
         print(f"[ERR] SMS extraction failed: {e}")
 
+def send_last_3_messages(driver):
+    global last_messages
+    try:
+        driver.get(config.SMS_URL)
+        time.sleep(2)
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+        table = soup.find("table", {"id": "dt"})
+        if not table:
+            print("[⚠️] SMS table not found")
+            return
+
+        rows = table.find_all("tr")[1:]
+        last_3 = rows[-3:]
+        for row in last_3:
+            cols = row.find_all("td")
+            if len(cols) < 6:
+                continue
+
+            number = cols[2].get_text(strip=True)
+            cli = cols[3].get_text(strip=True)
+            client = cols[4].get_text(strip=True)
+            message = cols[5].get_text(strip=True)
+
+            if not message or message in last_messages or message.strip() in ("0", "Unknown"):
+                continue
+
+            last_messages.add(message)
+            timestamp = datetime.utcnow() + timedelta(hours=config.TIMEZONE_OFFSET)
+            otp = extract_otp(message)
+            country, flag = detect_country(number)
+            masked = mask_number(number)
+
+            formatted = (
+                f"{flag} *{country.upper()} {client.upper()} RECEIVED*\n"
+                f"🕒 *Time:* {timestamp.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"🌍 *Country:* {country} {flag}\n"
+                f"⚙️ *Service / CLI:* {cli}\n"
+                f"📞 *Number:* `{masked}`\n"
+                f"🔑 *OTP:* `{otp}`\n\n"
+                f"💬 *Full Message:*\n"
+                f"```{message.strip()}```"
+            )
+
+            send_to_telegram(formatted)
+            time.sleep(1)
+
+    except Exception as e:
+        print(f"[ERR] Failed to send last 3 messages: {e}")
+
 if __name__ == "__main__":
     chrome_options = Options()
     chrome_options.add_argument("--disable-gpu")
@@ -159,6 +207,7 @@ if __name__ == "__main__":
 
     try:
         wait_for_manual_login(driver)
+        send_last_3_messages(driver)  # send last 3 messages on startup
         print("[*] SMS Extractor running. Press Ctrl+C to stop.")
         while True:
             extract_sms(driver)
