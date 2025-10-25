@@ -8,9 +8,9 @@ from selenium.webdriver.chrome.options import Options
 import phonenumbers
 from phonenumbers import geocoder, region_code_for_number
 import pycountry
-import config  # BOT_TOKEN, CHAT_ID, SMS_URL
+import config  # BOT_TOKEN, CHAT_ID, SMS_URL, LOGIN_URL, TIMEZONE_OFFSET
 
-# Cache to avoid sending duplicate messages
+# Cache for sent messages
 last_messages = set()
 
 def mask_number(number: str) -> str:
@@ -81,6 +81,18 @@ def send_to_telegram(text: str):
     except requests.exceptions.RequestException as e:
         print(f"[❌] Telegram request failed: {e}")
 
+def wait_for_manual_login(driver):
+    """Open login page and wait for manual login"""
+    print("[🔐] Opening login page for manual login...")
+    driver.get(config.LOGIN_URL)
+    print("[🕒] Please log in manually in the browser window.")
+    while True:
+        current_url = driver.current_url
+        if "login" not in current_url.lower():
+            print("[✅] Login detected, continuing...")
+            break
+        time.sleep(3)
+
 def extract_sms(driver):
     global last_messages
     try:
@@ -119,7 +131,7 @@ def extract_sms(driver):
                 continue
 
             last_messages.add(message)
-            timestamp = datetime.utcnow() + timedelta(hours=6)  # BD Time (UTC+6)
+            timestamp = datetime.utcnow() + timedelta(hours=config.TIMEZONE_OFFSET)
 
             otp = extract_otp(message)
             country, flag = detect_country(number)
@@ -147,11 +159,11 @@ if __name__ == "__main__":
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--start-maximized")
-    # chrome_options.add_argument("--headless=new")  # Uncomment for headless mode
 
     driver = webdriver.Chrome(options=chrome_options)
 
     try:
+        wait_for_manual_login(driver)
         print("[*] SMS Extractor running. Press Ctrl+C to stop.")
         while True:
             extract_sms(driver)
