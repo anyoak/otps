@@ -9,12 +9,31 @@ import phonenumbers
 from phonenumbers import geocoder, region_code_for_number
 import pycountry
 import hashlib
+import json
+import os
 
 import config  # BOT_TOKEN, CHAT_ID, SMS_URL
 
-# Cache for sent messages to avoid duplicates
-sent_messages_cache = set()
-last_processed_hash = None
+# Persistent cache for sent messages
+CACHE_FILE = "sent_messages_cache.json"
+
+def load_cache():
+    """Load cache from file"""
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, 'r') as f:
+                return set(json.load(f))
+        except:
+            return set()
+    return set()
+
+def save_cache(cache):
+    """Save cache to file"""
+    try:
+        with open(CACHE_FILE, 'w') as f:
+            json.dump(list(cache), f)
+    except Exception as e:
+        print(f"[⚠️] Cache save error: {e}")
 
 def mask_number(number: str) -> str:
     """Mask phone number middle digits"""
@@ -26,7 +45,7 @@ def mask_number(number: str) -> str:
 def country_to_flag(country_code: str) -> str:
     """Convert ISO country code to emoji flag"""
     if not country_code or len(country_code) != 2:
-        return "🏳️"
+        return "🇺🇳"
     return "".join(chr(127397 + ord(c)) for c in country_code.upper())
 
 def detect_country(number: str):
@@ -39,7 +58,7 @@ def detect_country(number: str):
             return country.name, country_to_flag(region)
     except:
         pass
-    return "Unknown", "🏳️"
+    return "Unknown", "🇺🇳"
 
 def extract_otp(message: str) -> str:
     """Extract OTP code from message with improved pattern matching"""
@@ -71,9 +90,9 @@ def extract_otp(message: str) -> str:
     
     return "N/A"
 
-def create_message_hash(number: str, message: str) -> str:
+def create_message_hash(number: str, message: str, timestamp: str = "") -> str:
     """Create unique hash for message to avoid duplicates"""
-    content = f"{number}_{message.strip()}"
+    content = f"{number}_{message.strip()}_{timestamp}"
     return hashlib.md5(content.encode()).hexdigest()
 
 def send_to_telegram(number, country_name, country_flag, service, masked_number, otp_code, message, timestamp):
@@ -90,9 +109,8 @@ def send_to_telegram(number, country_name, country_flag, service, masked_number,
         ]
     }
 
-    # New message format as requested with code block for message
     formatted = (
-        f"{country_flag} {country_name} {service.upper()} OTP RECEIVED \n"
+        f"{country_flag} {country_name} {service.upper()} RECEIVED \n"
         f"⏰ Time: {timestamp.strftime('%Y-%m-%d %H:%M:%S')}\n"
         f"🌍 Country: {country_name} {country_flag}\n"
         f"⚙️ Service: {service.upper()}\n"
@@ -121,26 +139,25 @@ def send_to_telegram(number, country_name, country_flag, service, masked_number,
         print(f"[❌] Telegram request error: {e}")
         return False
 
-def extract_sms(driver):
-    global sent_messages_cache, last_processed_hash
+def extract_sms(driver, sent_messages_cache):
+    """Extract SMS with improved duplicate detection"""
     
     try:
         driver.get(config.SMS_URL)
-        time.sleep(3)  # Wait for page to load completely
+        time.sleep(3)
         
-        # Refresh the page to get latest messages
+        # Refresh for latest messages
         driver.refresh()
         time.sleep(2)
         
         soup = BeautifulSoup(driver.page_source, "html.parser")
-        
-        # Find the SMS table
         table = soup.find('table', {'class': 'data-tbl-boxy'})
+        
         if not table:
             print("[⚠️] Could not find SMS table.")
-            return
+            return sent_messages_cache, False
 
-        # Extract column indices from table header
+        # Get column indices
         headers = table.find_all('th')
         column_indices = {}
         
@@ -155,58 +172,47 @@ def extract_sms(driver):
             elif "Date" in header_text:
                 column_indices['date'] = idx
 
-        # Check if we have required columns
         required_columns = ['number', 'service', 'sms']
         if not all(col in column_indices for col in required_columns):
             print(f"[⚠️] Missing required columns. Found: {list(column_indices.keys())}")
-            return
+            return sent_messages_cache, False
 
-        # Process table rows
-        rows = table.find_all('tr')[1:]  # Skip header row
-        
-        current_batch_hash = ""
-        new_messages_found = False
+        # Process rows
+        rows = table.find_all('tr')[1:]
+        cache_updated = False
+        new_messages_count = 0
         
         for row in rows:
             cols = row.find_all('td')
-            
-            # Skip if not enough columns
             if len(cols) <= max(column_indices.values()):
                 continue
 
-            # Extract data
             number = cols[column_indices['number']].get_text(strip=True) or "Unknown"
             service = cols[column_indices['service']].get_text(strip=True) or "Unknown"
             message = cols[column_indices['sms']].get_text(strip=True)
+            date_text = cols[column_indices['date']].get_text(strip=True) if 'date' in column_indices else ""
             
             # Skip invalid messages
-            if (not message or 
-                message.strip() in ("0", "Unknown", "") or
-                number in ("0", "Unknown") or
-                service in ("0", "Unknown")):
+            if (not message or message.strip() in ("0", "Unknown", "") or
+                number in ("0", "Unknown") or service in ("0", "Unknown")):
                 continue
             
-            # Create unique hash for this message
-            message_hash = create_message_hash(number, message)
-            current_batch_hash += message_hash
+            # Create unique hash with date to avoid duplicates
+            message_hash = create_message_hash(number, message, date_text)
             
             # Skip if already processed
             if message_hash in sent_messages_cache:
                 continue
                 
-            new_messages_found = True
+            # New message found
+            cache_updated = True
+            new_messages_count += 1
             
-            # Extract OTP
+            # Extract OTP and other details
             otp_code = extract_otp(message)
-            
-            # Detect country
             country_name, country_flag = detect_country(number)
-            
-            # Mask number
             masked_number = mask_number(number)
-            
-            # Create timestamp
-            timestamp = datetime.utcnow() + timedelta(hours=6)  # Dhaka time
+            timestamp = datetime.utcnow() + timedelta(hours=6)
             
             # Send to Telegram
             success = send_to_telegram(
@@ -222,27 +228,32 @@ def extract_sms(driver):
             
             if success:
                 sent_messages_cache.add(message_hash)
-                
-            # Small delay between messages to avoid rate limiting
-            time.sleep(1)
+            
+            time.sleep(1)  # Rate limiting
         
-        # Update last processed hash if new messages were found
-        if new_messages_found:
-            last_processed_hash = hashlib.md5(current_batch_hash.encode()).hexdigest()
-            print(f"[📊] Processed batch with {len(rows)} rows")
+        if new_messages_count > 0:
+            print(f"[📊] {new_messages_count} new messages processed")
+        
+        return sent_messages_cache, cache_updated
         
     except Exception as e:
         print(f"[ERR] Failed to extract SMS: {e}")
+        return sent_messages_cache, False
 
-def cleanup_old_cache():
-    """Clean up old cache entries to prevent memory issues"""
-    global sent_messages_cache
-    if len(sent_messages_cache) > 1000:
-        # Keep only the last 500 entries
-        sent_messages_cache = set(list(sent_messages_cache)[-500:])
-        print("[🧹] Cleaned up old cache entries")
+def cleanup_old_cache(cache):
+    """Clean up old cache entries"""
+    if len(cache) > 1000:
+        # Convert to list, keep last 500, convert back to set
+        new_cache = set(list(cache)[-500:])
+        print(f"[🧹] Cleaned up cache: {len(cache)} -> {len(new_cache)}")
+        return new_cache
+    return cache
 
 if __name__ == "__main__":
+    # Load existing cache
+    sent_messages_cache = load_cache()
+    print(f"[📁] Loaded {len(sent_messages_cache)} previously sent messages from cache")
+    
     chrome_options = Options()
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--no-sandbox")
@@ -252,35 +263,45 @@ if __name__ == "__main__":
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option('useAutomationExtension', False)
     
-    # For faster performance, you can enable headless after testing
     # chrome_options.add_argument("--headless=new")
     
     driver = webdriver.Chrome(options=chrome_options)
     driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
     try:
-        print("[*] 🚀 Advanced SMS Extractor Started!")
-        print("[*] 📱 Monitoring for new messages...")
+        print("[*] 🚀 Smart SMS Extractor Started!")
+        print("[*] 📱 Monitoring for NEW messages only...")
         print("[*] ⏰ Press Ctrl+C to stop.")
         
         processed_count = 0
         
         while True:
-            extract_sms(driver)
+            # Process messages and get updated cache
+            sent_messages_cache, cache_updated = extract_sms(driver, sent_messages_cache)
+            
+            # Save cache if updated
+            if cache_updated:
+                save_cache(sent_messages_cache)
+                print("[💾] Cache saved to file")
+            
             processed_count += 1
             
-            # Cleanup cache every 10 cycles
+            # Cleanup cache periodically
             if processed_count % 10 == 0:
-                cleanup_old_cache()
+                old_size = len(sent_messages_cache)
+                sent_messages_cache = cleanup_old_cache(sent_messages_cache)
+                if len(sent_messages_cache) != old_size:
+                    save_cache(sent_messages_cache)
             
-            # Faster polling for new messages
-            time.sleep(5)  # Check every 5 seconds for new messages
+            time.sleep(5)
             
     except KeyboardInterrupt:
         print("\n[🛑] Stopped by user.")
     except Exception as e:
         print(f"\n[💥] Unexpected error: {e}")
     finally:
+        # Save cache before exiting
+        save_cache(sent_messages_cache)
         driver.quit()
         print("[*] Browser closed.")
-        print(f"[📊] Total unique messages processed: {len(sent_messages_cache)}")
+        print(f"[📊] Total unique messages in cache: {len(sent_messages_cache)}")
