@@ -14,20 +14,17 @@ import config  # BOT_TOKEN, CHAT_ID, SMS_URL, LOGIN_URL, TIMEZONE_OFFSET
 last_messages = set()
 
 def mask_number(number: str) -> str:
-    """Mask phone number middle digits"""
     digits = re.sub(r"\D", "", number)
     if len(digits) > 6:
         return digits[:4] + "**" + digits[-4:]
     return number
 
 def country_to_flag(country_code: str) -> str:
-    """Convert ISO country code to emoji flag"""
     if not country_code or len(country_code) != 2:
         return "🏳️"
     return "".join(chr(127397 + ord(c)) for c in country_code.upper())
 
 def detect_country(number: str):
-    """Detect country name + flag"""
     try:
         parsed = phonenumbers.parse("+" + number, None)
         region = region_code_for_number(parsed)
@@ -39,11 +36,10 @@ def detect_country(number: str):
     return "Unknown", "🏳️"
 
 def extract_otp(message: str) -> str:
-    """Extract OTP code from message"""
     patterns = [
-        r'\b\d{3}-\d{3}\b',  # 111-111
-        r'\b\d{3}\s\d{3}\b', # 111 111
-        r'\b\d{6}\b'         # 111111
+        r'\b\d{3}-\d{3}\b',
+        r'\b\d{3}\s\d{3}\b',
+        r'\b\d{6}\b'
     ]
     for p in patterns:
         m = re.search(p, message)
@@ -52,9 +48,7 @@ def extract_otp(message: str) -> str:
     return "N/A"
 
 def send_to_telegram(text: str):
-    """Send formatted message with inline buttons"""
     url = f"https://api.telegram.org/bot{config.BOT_TOKEN}/sendMessage"
-
     keyboard = {
         "inline_keyboard": [
             [{"text": "🚀 Number Channel", "url": "https://t.me/number_group_kr"}],
@@ -82,7 +76,6 @@ def send_to_telegram(text: str):
         print(f"[❌] Telegram request failed: {e}")
 
 def wait_for_manual_login(driver):
-    """Open login page and wait for manual login"""
     print("[🔐] Opening login page for manual login...")
     driver.get(config.LOGIN_URL)
     print("[🕒] Please log in manually in the browser window.")
@@ -99,23 +92,27 @@ def extract_sms(driver):
         driver.get(config.SMS_URL)
         time.sleep(2)
         soup = BeautifulSoup(driver.page_source, "html.parser")
-        headers = soup.find_all("th")
+        table = soup.find("table")
+        if not table:
+            print("[⚠️] SMS table not found")
+            return
 
+        headers = table.find_all("th")
         number_idx = service_idx = sms_idx = None
         for idx, th in enumerate(headers):
-            label = th.get("aria-label", "").lower()
+            label = th.get_text(strip=True).lower()
             if "number" in label:
                 number_idx = idx
-            elif "cli" in label or "service" in label:
+            elif "service" in label or "cli" in label:
                 service_idx = idx
-            elif "sms" in label:
+            elif "sms" in label or "message" in label:
                 sms_idx = idx
 
         if None in (number_idx, service_idx, sms_idx):
             print("[⚠️] Could not detect table columns.")
             return
 
-        rows = soup.find_all("tr")[1:]  # Skip header
+        rows = table.find_all("tr")[1:]
         for row in rows:
             cols = row.find_all("td")
             if len(cols) <= max(number_idx, service_idx, sms_idx):
@@ -125,9 +122,7 @@ def extract_sms(driver):
             service = cols[service_idx].get_text(strip=True)
             message = cols[sms_idx].get_text(strip=True)
 
-            if not message or message in last_messages:
-                continue
-            if message.strip() in ("0", "Unknown"):
+            if not message or message in last_messages or message.strip() in ("0", "Unknown"):
                 continue
 
             last_messages.add(message)
