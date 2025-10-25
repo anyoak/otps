@@ -8,17 +8,19 @@ from selenium.webdriver.chrome.options import Options
 import phonenumbers
 from phonenumbers import geocoder, region_code_for_number
 import pycountry
+import hashlib
 
 import config  # BOT_TOKEN, CHAT_ID, SMS_URL
 
-# Cache for sent messages
-last_messages = set()
+# Cache for sent messages to avoid duplicates
+sent_messages_cache = set()
+last_processed_hash = None
 
 def mask_number(number: str) -> str:
-    """Mask phone number middle 3 digits"""
+    """Mask phone number middle digits"""
     digits = re.sub(r"\D", "", number)
     if len(digits) > 6:
-        return digits[:4] + "***" + digits[-3:]
+        return digits[:4] + "**" + digits[-4:]
     return number
 
 def country_to_flag(country_code: str) -> str:
@@ -41,7 +43,7 @@ def detect_country(number: str):
 
 def extract_otp(message: str) -> str:
     """Extract OTP code from message with improved pattern matching"""
-    # First try to find WhatsApp-style codes (3 digits - 3 digits)
+    # WhatsApp style codes
     whatsapp_patterns = [
         r'\b\d{3}-\d{3}\b',  # 111-111 format
         r'\b\d{3} \d{3}\b',  # 111 111 format
@@ -51,16 +53,15 @@ def extract_otp(message: str) -> str:
     for pattern in whatsapp_patterns:
         match = re.search(pattern, message)
         if match:
-            # Remove any non-digit characters for consistent formatting
-            return re.sub(r'\D', '', match.group(0))
+            clean_code = re.sub(r'\D', '', match.group(0))
+            if len(clean_code) == 6:
+                return clean_code
     
-    # Then try to find other common OTP patterns
+    # Other common OTP patterns
     common_patterns = [
         r'\b\d{4}\b',  # 4-digit codes
         r'\b\d{5}\b',  # 5-digit codes
         r'\b\d{6}\b',  # 6-digit codes
-        r'\b\d{7}\b',  # 7-digit codes
-        r'\b\d{8}\b',  # 8-digit codes
     ]
     
     for pattern in common_patterns:
@@ -70,15 +71,18 @@ def extract_otp(message: str) -> str:
     
     return "N/A"
 
+def create_message_hash(number: str, message: str) -> str:
+    """Create unique hash for message to avoid duplicates"""
+    content = f"{number}_{message.strip()}"
+    return hashlib.md5(content.encode()).hexdigest()
+
 def send_to_telegram(number, country_name, country_flag, service, masked_number, otp_code, message, timestamp):
-    """Send message with updated inline buttons format"""
+    """Send message with the new format"""
     url = f"https://api.telegram.org/bot{config.BOT_TOKEN}/sendMessage"
 
     keyboard = {
         "inline_keyboard": [
-            # প্রথম সারি - Number Channel
             [{"text": "🚀 Number Channel", "url": "https://t.me/number_group_kr"}],
-            # দ্বিতীয় সারি - দুইটা বাটন পাশাপাশি
             [
                 {"text": "🔗 Main Channel", "url": "https://t.me/+BYBSV6960Ds5OGM9"},
                 {"text": "💬 Support Group", "url": "https://t.me/kr_support_group"}
@@ -86,12 +90,15 @@ def send_to_telegram(number, country_name, country_flag, service, masked_number,
         ]
     }
 
+    # New message format as requested with code block for message
     formatted = (
-        f"{country_flag} {country_name} – {service.upper()} OTP RECEIVED\n"
-        f"🕒 **Time:** {timestamp.strftime('%Y-%m-%d %H:%M:%S')}\n"
-        f"📞 **Number:** `{masked_number}`\n"
-        f"🔑 **OTP:** `{otp_code}`\n\n"
-        f"💬 **Full Message:**\n"
+        f"{country_flag} {country_name} {service.upper()} OTP RECEIVED \n"
+        f"⏰ Time: {timestamp.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"🌍 Country: {country_name} {country_flag}\n"
+        f"⚙️ Service: {service.upper()}\n"
+        f"☎️ Number: {masked_number}\n\n"
+        f"🔑 OTP: {otp_code}\n\n"
+        f"📩 Full Message:\n"
         f"```{message.strip()}```"
     )
 
@@ -105,87 +112,104 @@ def send_to_telegram(number, country_name, country_flag, service, masked_number,
     try:
         res = requests.post(url, json=payload, timeout=10)
         if res.status_code == 200:
-            print("[✅] Telegram message sent.")
+            print(f"[✅] Telegram message sent for {service} - {otp_code}")
+            return True
         else:
             print(f"[❌] Failed: {res.status_code} - {res.text}")
+            return False
     except requests.exceptions.RequestException as e:
         print(f"[❌] Telegram request error: {e}")
+        return False
 
 def extract_sms(driver):
-    global last_messages
+    global sent_messages_cache, last_processed_hash
+    
     try:
         driver.get(config.SMS_URL)
+        time.sleep(3)  # Wait for page to load completely
+        
+        # Refresh the page to get latest messages
+        driver.refresh()
         time.sleep(2)
+        
         soup = BeautifulSoup(driver.page_source, "html.parser")
         
-        # HTML structure অনুযায়ী টেবিল থেকে ডেটা এক্সট্র্যাক্ট করুন
+        # Find the SMS table
         table = soup.find('table', {'class': 'data-tbl-boxy'})
         if not table:
             print("[⚠️] Could not find SMS table.")
             return
 
-        # টেবিলের হেডার থেকে কলাম ইনডেক্স খুঁজে বের করুন
+        # Extract column indices from table header
         headers = table.find_all('th')
         column_indices = {}
         
         for idx, header in enumerate(headers):
             header_text = header.get_text(strip=True)
-            if header_text == "Number":
+            if "Number" in header_text:
                 column_indices['number'] = idx
-            elif header_text == "CLI":
+            elif "CLI" in header_text:
                 column_indices['service'] = idx
-            elif header_text == "SMS":
+            elif "SMS" in header_text:
                 column_indices['sms'] = idx
-            elif header_text == "Date":
+            elif "Date" in header_text:
                 column_indices['date'] = idx
 
-        # প্রয়োজনীয় কলামগুলো পাওয়া গেছে কিনা চেক করুন
+        # Check if we have required columns
         required_columns = ['number', 'service', 'sms']
         if not all(col in column_indices for col in required_columns):
             print(f"[⚠️] Missing required columns. Found: {list(column_indices.keys())}")
             return
 
-        # টেবিলের row গুলো প্রসেস করুন
-        rows = table.find_all('tr')[1:]  # প্রথম row (হেডার) বাদ দিন
+        # Process table rows
+        rows = table.find_all('tr')[1:]  # Skip header row
+        
+        current_batch_hash = ""
+        new_messages_found = False
         
         for row in rows:
             cols = row.find_all('td')
             
-            # যদি row-এ পর্যাপ্ত কলাম না থাকে, তাহলে skip করুন
+            # Skip if not enough columns
             if len(cols) <= max(column_indices.values()):
                 continue
 
-            # ডেটা এক্সট্র্যাক্ট করুন
+            # Extract data
             number = cols[column_indices['number']].get_text(strip=True) or "Unknown"
             service = cols[column_indices['service']].get_text(strip=True) or "Unknown"
             message = cols[column_indices['sms']].get_text(strip=True)
-            date = cols[column_indices['date']].get_text(strip=True) if 'date' in column_indices else "Unknown"
-
-            # ভ্যালিডেশন চেক
-            if not message or message in last_messages:
-                continue
-            if message.strip() in ("0", "Unknown") or (
-                number in ("0", "Unknown") and service in ("0", "Unknown")
-            ):
-                continue
-
-            # ডুপ্লিকেট মেসেজ এড়াতে মেসেজ স্টোর করুন
-            last_messages.add(message)
             
-            # টাইমস্ট্যাম্প তৈরি করুন
-            timestamp = datetime.utcnow() + timedelta(hours=6)  # Dhaka time
-
-            # OTP এক্সট্র্যাক্ট করুন
+            # Skip invalid messages
+            if (not message or 
+                message.strip() in ("0", "Unknown", "") or
+                number in ("0", "Unknown") or
+                service in ("0", "Unknown")):
+                continue
+            
+            # Create unique hash for this message
+            message_hash = create_message_hash(number, message)
+            current_batch_hash += message_hash
+            
+            # Skip if already processed
+            if message_hash in sent_messages_cache:
+                continue
+                
+            new_messages_found = True
+            
+            # Extract OTP
             otp_code = extract_otp(message)
             
-            # কান্ট্রি ডিটেক্ট করুন
+            # Detect country
             country_name, country_flag = detect_country(number)
             
-            # নাম্বার মাস্ক করুন
+            # Mask number
             masked_number = mask_number(number)
-
-            # টেলিগ্রামে মেসেজ পাঠান
-            send_to_telegram(
+            
+            # Create timestamp
+            timestamp = datetime.utcnow() + timedelta(hours=6)  # Dhaka time
+            
+            # Send to Telegram
+            success = send_to_telegram(
                 number=number,
                 country_name=country_name,
                 country_flag=country_flag,
@@ -195,9 +219,28 @@ def extract_sms(driver):
                 message=message,
                 timestamp=timestamp
             )
-
+            
+            if success:
+                sent_messages_cache.add(message_hash)
+                
+            # Small delay between messages to avoid rate limiting
+            time.sleep(1)
+        
+        # Update last processed hash if new messages were found
+        if new_messages_found:
+            last_processed_hash = hashlib.md5(current_batch_hash.encode()).hexdigest()
+            print(f"[📊] Processed batch with {len(rows)} rows")
+        
     except Exception as e:
         print(f"[ERR] Failed to extract SMS: {e}")
+
+def cleanup_old_cache():
+    """Clean up old cache entries to prevent memory issues"""
+    global sent_messages_cache
+    if len(sent_messages_cache) > 1000:
+        # Keep only the last 500 entries
+        sent_messages_cache = set(list(sent_messages_cache)[-500:])
+        print("[🧹] Cleaned up old cache entries")
 
 if __name__ == "__main__":
     chrome_options = Options()
@@ -205,17 +248,39 @@ if __name__ == "__main__":
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--start-maximized")
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option('useAutomationExtension', False)
+    
+    # For faster performance, you can enable headless after testing
     # chrome_options.add_argument("--headless=new")
-
+    
     driver = webdriver.Chrome(options=chrome_options)
+    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
     try:
-        print("[*] SMS Extractor running. Press Ctrl+C to stop.")
+        print("[*] 🚀 Advanced SMS Extractor Started!")
+        print("[*] 📱 Monitoring for new messages...")
+        print("[*] ⏰ Press Ctrl+C to stop.")
+        
+        processed_count = 0
+        
         while True:
             extract_sms(driver)
-            time.sleep(10)
+            processed_count += 1
+            
+            # Cleanup cache every 10 cycles
+            if processed_count % 10 == 0:
+                cleanup_old_cache()
+            
+            # Faster polling for new messages
+            time.sleep(5)  # Check every 5 seconds for new messages
+            
     except KeyboardInterrupt:
         print("\n[🛑] Stopped by user.")
+    except Exception as e:
+        print(f"\n[💥] Unexpected error: {e}")
     finally:
         driver.quit()
         print("[*] Browser closed.")
+        print(f"[📊] Total unique messages processed: {len(sent_messages_cache)}")
