@@ -1,5 +1,6 @@
 import os
 import re
+from telegram.ext import filters
 import logging
 import sqlite3
 import asyncio
@@ -2414,7 +2415,7 @@ def main():
             handle_captcha
         ))
         application.add_handler(MessageHandler(
-            filters.TEXT & ~filters.COMMAND & filters.Regex(r'^(Base:|LTC:|XLM:)', flags=re.IGNORECASE), 
+            filters.TEXT & ~filters.COMMAND & filters.Regex(r'^(Base:|LTC:|XLM:)', case_sensitive=False), 
             handle_wallet_setup
         ))
         application.add_handler(MessageHandler(
@@ -2423,7 +2424,7 @@ def main():
             lambda update, context: context.user_data.get('awaiting_user_id_for_login')
         ))
         application.add_handler(MessageHandler(
-            filters.TEXT & ~filters.COMMAND & filters.Regex(r'^(add|subtract)\s+\d+\s+\d+(\.\d+)?$'), 
+            filters.TEXT & ~filters.COMMAND & filters.Regex(r'^(add|subtract)\s+\d+\s+\d+(\.\d+)?$', case_sensitive=False), 
             handle_balance_manage,
             lambda update, context: context.user_data.get('awaiting_balance_manage')
         ))
@@ -2438,7 +2439,7 @@ def main():
             lambda update, context: context.user_data.get('awaiting_user_details')
         ))
         application.add_handler(MessageHandler(
-            filters.TEXT & ~filters.COMMAND & filters.Regex(r'^(ban|unban)\s+\d+(\s+\d+)?$'), 
+            filters.TEXT & ~filters.COMMAND & filters.Regex(r'^(ban|unban)\s+\d+(\s+\d+)?$', case_sensitive=False), 
             handle_ban_action,
             lambda update, context: context.user_data.get('awaiting_ban_action')
         ))
