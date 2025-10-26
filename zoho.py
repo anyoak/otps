@@ -10,6 +10,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 import math
 import time
 import traceback
+import hashlib
 
 # Configure logging
 logging.basicConfig(
@@ -136,12 +137,12 @@ async def error_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Send error to admin
         await context.bot.send_message(
             chat_id=ADMIN_ID,
-            text=error_message[:4000]  # Telegram message limit
+            text=error_message[:4000]
         )
     except Exception as e:
         logger.error(f"Failed to send error message: {e}")
 
-# Animation functions
+# Animation functions - FIXED
 async def loading_animation(update, context, message_text, duration=3):
     try:
         if hasattr(update, 'message'):
@@ -149,42 +150,68 @@ async def loading_animation(update, context, message_text, duration=3):
         else:
             message = await update.callback_query.message.reply_text(message_text)
         
-        for i in range(duration):
-            dots = "▪️" * (i % 4) + "▫️" * (3 - (i % 4))
-            loading_text = f"{dots}\nLoading{'.' * ((i % 3) + 1)}"
+        animations = ["⣼", "⣹", "⢻", "⠿", "⡟", "⣏", "⣧", "⣶"]
+        
+        for i in range(duration * 2):
+            dots = "▪️" * ((i % 4) + 1) + "▫️" * (3 - (i % 4))
+            current_anim = animations[i % len(animations)]
+            loading_text = f"{current_anim} {message_text}\n{dots}"
             try:
                 await message.edit_text(loading_text)
             except:
                 pass
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.5)
+        
+        try:
+            await message.edit_text(f"✅ {message_text}")
+        except:
+            pass
         
         return message
     except Exception as e:
         logger.error(f"Loading animation error: {e}")
-        return None
+        try:
+            if hasattr(update, 'message'):
+                return await update.message.reply_text(f"✅ {message_text}")
+            else:
+                return await update.callback_query.message.reply_text(f"✅ {message_text}")
+        except:
+            return None
 
 async def countdown_animation(update, context, message_text, seconds=5):
     try:
         if hasattr(update, 'message'):
-            message = await update.message.reply_text(message_text)
+            message = await update.message.reply_text(f"{message_text}\n\nTime remaining: {seconds} seconds")
         else:
-            message = await update.callback_query.message.reply_text(message_text)
+            message = await update.callback_query.message.reply_text(f"{message_text}\n\nTime remaining: {seconds} seconds")
         
-        for i in range(seconds, 0, -1):
+        for i in range(seconds - 1, 0, -1):
             try:
                 await message.edit_text(f"{message_text}\n\nTime remaining: {i} seconds")
-            except:
-                pass
+            except Exception as e:
+                logger.error(f"Error editing countdown: {e}")
+                break
             await asyncio.sleep(1)
+        
+        try:
+            await message.edit_text(f"⏰ {message_text} - Time's up!")
+        except:
+            pass
         
         return message
     except Exception as e:
         logger.error(f"Countdown animation error: {e}")
-        return None
+        try:
+            if hasattr(update, 'message'):
+                return await update.message.reply_text(f"⏰ {message_text}")
+            else:
+                return await update.callback_query.message.reply_text(f"⏰ {message_text}")
+        except:
+            return None
 
-# Database helper functions
+# Database helper functions - FIXED
 def get_db_connection():
-    return sqlite3.connect('bot_database.db')
+    return sqlite3.connect('bot_database.db', check_same_thread=False)
 
 def user_exists(user_id):
     try:
@@ -203,15 +230,16 @@ def create_user(user_id):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # Generate random password
-        password = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+        # Generate random password - FIXED
+        plain_password = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+        hashed_password = hashlib.sha256(plain_password.encode()).hexdigest()
         
-        cursor.execute("INSERT OR IGNORE INTO users (user_id, password) VALUES (?, ?)", (user_id, password))
+        cursor.execute("INSERT OR IGNORE INTO users (user_id, password) VALUES (?, ?)", (user_id, hashed_password))
         cursor.execute("INSERT OR IGNORE INTO balances (user_id, balance) VALUES (?, 0)", (user_id,))
         
         conn.commit()
         conn.close()
-        return password
+        return plain_password
     except Exception as e:
         logger.error(f"Error creating user: {e}")
         return None
@@ -239,16 +267,19 @@ def is_user_banned(user_id):
         if result:
             is_banned, suspended_until = result
             if suspended_until:
-                suspended_until = datetime.fromisoformat(suspended_until)
-                if datetime.now() < suspended_until:
-                    return True, suspended_until
+                try:
+                    suspended_until = datetime.fromisoformat(suspended_until)
+                    if datetime.now() < suspended_until:
+                        return True, suspended_until
+                except:
+                    pass
             return bool(is_banned), None
         return False, None
     except Exception as e:
         logger.error(f"Error checking user ban status: {e}")
         return False, None
 
-# Start command with captcha
+# Start command with captcha - FIXED
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -258,11 +289,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if banned:
             if until:
                 time_left = until - datetime.now()
-                minutes_left = int(time_left.total_seconds() / 60)
-                await countdown_animation(update, context, 
-                                        f"🚫 Account Temporarily Blocked\nReason: Failed captcha attempt\nTime remaining: {minutes_left} minutes")
+                minutes_left = max(1, int(time_left.total_seconds() / 60))
+                await update.message.reply_text(f"🚫 Account Temporarily Blocked\nReason: Security violation\nTime remaining: {minutes_left} minutes")
             else:
                 await update.message.reply_text("🚫 Your account has been banned. Contact support.")
+            return
+        
+        # Check if user exists
+        if not user_exists(user_id):
+            await update.message.reply_text(
+                "❌ No account found for your Telegram ID.\n\n"
+                "Please contact the admin to create an account for you."
+            )
             return
         
         # Generate math captcha
@@ -273,7 +311,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if operator == '+':
             answer = num1 + num2
         elif operator == '-':
+            # Ensure positive result
             answer = num1 - num2
+            while answer <= 0:
+                num1 = random.randint(5, 20)
+                num2 = random.randint(1, 4)
+                answer = num1 - num2
         else:
             answer = num1 * num2
         
@@ -281,15 +324,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['captcha_time'] = datetime.now()
         
         await update.message.reply_text(
-            f"🔐 Welcome! Please solve this math problem to continue:\n\n"
+            f"🔐 **Welcome to YourBase Bot!**\n\n"
+            f"To continue, please solve this math problem:\n\n"
             f"**{num1} {operator} {num2} = ?**\n\n"
             f"Reply with the answer below:"
         )
     except Exception as e:
         logger.error(f"Start command error: {e}")
-        await update.message.reply_text("❌ An error occurred. Please try again.")
+        await update.message.reply_text("❌ An error occurred. Please try /start again.")
 
-# Handle captcha response
+# Handle captcha response - FIXED
 async def handle_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -299,17 +343,33 @@ async def handle_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Please use /start to begin.")
             return
         
+        # Check if user exists
+        if not user_exists(user_id):
+            await update.message.reply_text(
+                "❌ No account found for your Telegram ID.\n\n"
+                "Please contact the admin to create an account for you."
+            )
+            return
+        
+        # Check if user is banned
+        banned, until = is_user_banned(user_id)
+        if banned:
+            await update.message.reply_text("🚫 Your account is suspended. Contact support.")
+            return
+        
         try:
-            if int(user_input) == context.user_data['captcha_answer']:
-                # Captcha passed
-                await loading_animation(update, context, "✅ Captcha verified! Checking account...")
+            user_answer = int(user_input.strip())
+            correct_answer = context.user_data['captcha_answer']
+            
+            if user_answer == correct_answer:
+                await loading_animation(update, context, "Verifying captcha...", 2)
+                await update.message.reply_text("✅ Captcha successful! Use /login to access your account.")
                 
-                if user_exists(user_id):
-                    await update.message.reply_text("✅ Captcha successful! Please use /login to access your account.")
-                else:
-                    await update.message.reply_text("❌ Account not found. Please contact support.")
+                # Clear captcha data
+                context.user_data.pop('captcha_answer', None)
+                
             else:
-                # Wrong captcha - suspend for 30 minutes
+                # Wrong captcha
                 suspend_until = datetime.now() + timedelta(minutes=30)
                 conn = get_db_connection()
                 cursor = conn.cursor()
@@ -319,15 +379,15 @@ async def handle_captcha(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 conn.close()
                 
                 await countdown_animation(update, context, 
-                                        "❌ Wrong answer! Account temporarily suspended for 30 minutes.")
+                                        "❌ Wrong answer! Account temporarily suspended for 30 minutes.", 3)
                 
         except ValueError:
             await update.message.reply_text("❌ Please enter a valid number.")
     except Exception as e:
         logger.error(f"Captcha handling error: {e}")
-        await update.message.reply_text("❌ An error occurred. Please try again.")
+        await update.message.reply_text("❌ An error occurred. Please try /start again.")
 
-# Login command
+# Login command - FIXED
 async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -336,28 +396,29 @@ async def login(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if banned:
             if until:
                 time_left = until - datetime.now()
-                minutes_left = int(time_left.total_seconds() / 60)
+                minutes_left = max(1, int(time_left.total_seconds() / 60))
                 await update.message.reply_text(f"🚫 Account suspended. Try again in {minutes_left} minutes.")
             else:
                 await update.message.reply_text("🚫 Account banned. Contact support.")
             return
         
         if not user_exists(user_id):
-            # Auto-create user if not exists (for admin testing)
-            password = create_user(user_id)
-            if password:
-                await update.message.reply_text(f"✅ Account created automatically!\nYour password: {password}\nPlease login again with /login")
-            else:
-                await update.message.reply_text("❌ Account not found. Please contact support.")
+            await update.message.reply_text(
+                "❌ No account found for your Telegram ID.\n\n"
+                "Please contact the admin to create an account for you."
+            )
             return
         
         context.user_data['awaiting_password'] = True
-        await update.message.reply_text("🔐 Please enter your password:")
+        await update.message.reply_text(
+            "🔐 **Login**\n\n"
+            "Please enter your password:"
+        )
     except Exception as e:
         logger.error(f"Login command error: {e}")
         await update.message.reply_text("❌ An error occurred. Please try again.")
 
-# Handle password verification
+# Handle password verification - FIXED
 async def handle_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         user_id = update.effective_user.id
@@ -365,10 +426,11 @@ async def handle_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not context.user_data.get('awaiting_password'):
             return
         
-        password_attempt = update.message.text
-        actual_password = get_user_password(user_id)
+        password_attempt = update.message.text.strip()
+        hashed_attempt = hashlib.sha256(password_attempt.encode()).hexdigest()
+        actual_hashed = get_user_password(user_id)
         
-        if password_attempt == actual_password:
+        if actual_hashed and hashed_attempt == actual_hashed:
             # Successful login
             context.user_data['logged_in'] = True
             context.user_data['user_id'] = user_id
@@ -382,7 +444,7 @@ async def handle_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.commit()
             conn.close()
             
-            await loading_animation(update, context, "✅ Login successful!")
+            await loading_animation(update, context, "Logging you in...", 2)
             await show_user_dashboard(update, context)
         else:
             # Wrong password - track attempts
@@ -404,22 +466,33 @@ async def handle_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 conn.close()
                 
                 await countdown_animation(update, context, 
-                                        "❌ Too many failed attempts! Account suspended for 1 hour.")
+                                        "❌ Too many failed attempts! Account suspended for 1 hour.", 3)
             else:
                 conn.commit()
                 conn.close()
-                await update.message.reply_text(f"❌ Wrong password! {3-attempts} attempts remaining.")
+                remaining_attempts = 3 - attempts
+                await update.message.reply_text(f"❌ Wrong password! {remaining_attempts} attempts remaining.")
                 
     except Exception as e:
         logger.error(f"Password handling error: {e}")
-        await update.message.reply_text("❌ An error occurred. Please try again.")
+        await update.message.reply_text("❌ An error occurred. Please try /login again.")
 
-# User dashboard
+# User dashboard - FIXED
 async def show_user_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not context.user_data.get('logged_in'):
             await update.message.reply_text("Please login first using /login")
             return
+        
+        user_id = context.user_data['user_id']
+        
+        # Get user balance
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT balance FROM balances WHERE user_id = ?", (user_id,))
+        result = cursor.fetchone()
+        balance = result[0] if result else 0
+        conn.close()
         
         keyboard = [
             [InlineKeyboardButton("📊 Check Balance", callback_data="balance")],
@@ -434,114 +507,17 @@ async def show_user_dashboard(update: Update, context: ContextTypes.DEFAULT_TYPE
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await update.message.reply_text(
-            "🏠 **User Dashboard**\n\n"
-            "Select an option from below:",
+            f"🏠 **User Dashboard**\n\n"
+            f"👤 User ID: `{user_id}`\n"
+            f"💰 Current Balance: `${balance:.2f}`\n\n"
+            f"Select an option from below:",
             reply_markup=reply_markup
         )
     except Exception as e:
         logger.error(f"Dashboard error: {e}")
-        await update.message.reply_text("❌ An error occurred. Please try again.")
+        await update.message.reply_text("❌ An error occurred. Please try /login again.")
 
-# Set wallet command
-async def setwallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if not context.user_data.get('logged_in'):
-            await update.message.reply_text("Please login first using /login")
-            return
-        
-        context.user_data['setting_wallet'] = True
-        await update.message.reply_text(
-            "💼 **Set Your Wallet**\n\n"
-            "Please enter your wallet addresses in the following format:\n\n"
-            "**Base:** 0xYourBaseAddress\n"
-            "**LTC:** LYourLitecoinAddress\n"
-            "**XLM:** YourStellarAddress:Memo (Memo is optional)\n\n"
-            "Example:\n"
-            "Base: 0x742d35Cc6634C0532925a3b8D\n"
-            "LTC: LTLnWGpFA9NMYzQpC9ZzK6c\n"
-            "XLM: GD5XCRFGBG4PQGYU4XGXW4:123456"
-        )
-    except Exception as e:
-        logger.error(f"Setwallet command error: {e}")
-        await update.message.reply_text("❌ An error occurred. Please try again.")
-
-# Handle wallet setup
-async def handle_wallet_setup(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if not context.user_data.get('setting_wallet'):
-            return
-        
-        user_id = context.user_data['user_id']
-        wallet_text = update.message.text
-        
-        # Parse wallet addresses
-        lines = wallet_text.split('\n')
-        base_wallet = None
-        ltc_wallet = None
-        xlm_address = None
-        xlm_memo = None
-        
-        for line in lines:
-            if line.lower().startswith('base:'):
-                base_wallet = line.split(':', 1)[1].strip()
-            elif line.lower().startswith('ltc:'):
-                ltc_wallet = line.split(':', 1)[1].strip()
-            elif line.lower().startswith('xlm:'):
-                xlm_parts = line.split(':', 1)[1].strip()
-                if ':' in xlm_parts:
-                    xlm_address, xlm_memo = xlm_parts.split(':', 1)
-                else:
-                    xlm_address = xlm_parts
-        
-        # Save to database
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT OR REPLACE INTO wallets (user_id, base, ltc, xlm_address, xlm_memo)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (user_id, base_wallet, ltc_wallet, xlm_address, xlm_memo))
-        conn.commit()
-        conn.close()
-        
-        context.user_data['setting_wallet'] = False
-        
-        await loading_animation(update, context, "💼 Saving wallet addresses...")
-        await update.message.reply_text("✅ Wallet addresses saved successfully!")
-    except Exception as e:
-        logger.error(f"Wallet setup error: {e}")
-        await update.message.reply_text("❌ Error saving wallet addresses. Please check the format.")
-
-# Check database command (Today's List)
-async def check_database(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if not context.user_data.get('logged_in'):
-            await update.message.reply_text("Please login first using /login")
-            return
-        
-        user_id = context.user_data['user_id']
-        
-        # Check if user has a database file
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT file_path FROM user_database_files WHERE user_id = ?", (user_id,))
-        result = cursor.fetchone()
-        conn.close()
-        
-        if result:
-            file_path = result[0]
-            try:
-                with open(file_path, 'r') as file:
-                    content = file.read()
-                await update.message.reply_text(f"📋 **Today's List for You:**\n\n{content}")
-            except FileNotFoundError:
-                await update.message.reply_text("📋 No database file found for today.")
-        else:
-            await update.message.reply_text("📋 No database file set for your account yet.")
-    except Exception as e:
-        logger.error(f"Database check error: {e}")
-        await update.message.reply_text("❌ An error occurred while fetching your database.")
-
-# Balance command
+# Balance command - FIXED
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not context.user_data.get('logged_in'):
@@ -558,13 +534,108 @@ async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         balance_amount = result[0] if result else 0
         
-        await loading_animation(update, context, "📊 Checking balance...")
-        await update.message.reply_text(f"💰 **Your Balance:** ${balance_amount:.2f}")
+        await loading_animation(update, context, "Checking your balance...", 2)
+        await update.message.reply_text(f"💰 **Your Balance:** `${balance_amount:.2f}`")
     except Exception as e:
         logger.error(f"Balance check error: {e}")
         await update.message.reply_text("❌ An error occurred while checking balance.")
 
-# Withdraw command
+# Set wallet command - FIXED
+async def setwallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        if not context.user_data.get('logged_in'):
+            await update.message.reply_text("Please login first using /login")
+            return
+        
+        context.user_data['setting_wallet'] = True
+        await update.message.reply_text(
+            "💼 **Set Your Wallet**\n\n"
+            "Please enter your wallet addresses in the following format:\n\n"
+            "**Base:** 0xYourBaseAddress\n"
+            "**LTC:** LYourLitecoinAddress\n"
+            "**XLM:** YourStellarAddress:Memo (Memo is optional)\n\n"
+            "**Example:**\n"
+            "Base: 0x742d35Cc6634C0532925a3b8D\n"
+            "LTC: LTLnWGpFA9NMYzQpC9ZzK6c\n"
+            "XLM: GD5XCRFGBG4PQGYU4XGXW4:123456\n\n"
+            "Paste your wallet addresses now:"
+        )
+    except Exception as e:
+        logger.error(f"Setwallet command error: {e}")
+        await update.message.reply_text("❌ An error occurred. Please try again.")
+
+# Handle wallet setup - FIXED
+async def handle_wallet_setup(update: Update, context: ContextTypes.DEFAULT_TYPE, target_user_id=None):
+    try:
+        if target_user_id is None:
+            if not context.user_data.get('setting_wallet'):
+                return
+            user_id = context.user_data['user_id']
+        else:
+            user_id = target_user_id
+        
+        wallet_text = update.message.text
+        
+        # Parse wallet addresses
+        lines = [line.strip() for line in wallet_text.split('\n') if line.strip()]
+        base_wallet = None
+        ltc_wallet = None
+        xlm_address = None
+        xlm_memo = None
+        
+        for line in lines:
+            line_lower = line.lower()
+            if line_lower.startswith('base:'):
+                base_wallet = line.split(':', 1)[1].strip()
+            elif line_lower.startswith('ltc:'):
+                ltc_wallet = line.split(':', 1)[1].strip()
+            elif line_lower.startswith('xlm:'):
+                xlm_parts = line.split(':', 1)[1].strip()
+                if ':' in xlm_parts:
+                    xlm_address, xlm_memo = xlm_parts.split(':', 1)
+                    xlm_address = xlm_address.strip()
+                    xlm_memo = xlm_memo.strip()
+                else:
+                    xlm_address = xlm_parts
+        
+        # Validate at least one wallet is provided
+        if not any([base_wallet, ltc_wallet, xlm_address]):
+            await update.message.reply_text("❌ Please provide at least one valid wallet address.")
+            return
+        
+        # Save to database
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT OR REPLACE INTO wallets (user_id, base, ltc, xlm_address, xlm_memo)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (user_id, base_wallet, ltc_wallet, xlm_address, xlm_memo))
+        conn.commit()
+        conn.close()
+        
+        if target_user_id is None:
+            context.user_data['setting_wallet'] = False
+        
+        # Show success message with saved wallets
+        wallet_info = "✅ **Wallet Addresses Saved!**\n\n"
+        if base_wallet:
+            wallet_info += f"• **Base:** `{base_wallet}`\n"
+        if ltc_wallet:
+            wallet_info += f"• **LTC:** `{ltc_wallet}`\n"
+        if xlm_address:
+            wallet_info += f"• **XLM:** `{xlm_address}`"
+            if xlm_memo:
+                wallet_info += f" (Memo: `{xlm_memo}`)"
+            wallet_info += "\n"
+        
+        await loading_animation(update, context, "Saving your wallet addresses...", 2)
+        await update.message.reply_text(wallet_info)
+        
+    except Exception as e:
+        logger.error(f"Wallet setup error: {e}")
+        await update.message.reply_text("❌ Error saving wallet addresses. Please check the format and try again.")
+
+# Withdraw command - FIXED
 async def withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not context.user_data.get('logged_in'):
@@ -574,15 +645,23 @@ async def withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(context.args) < 2:
             await update.message.reply_text(
                 "💰 **Withdraw Funds**\n\n"
-                "Usage: /withdraw <amount> <method>\n"
-                "Methods: base, ltc, xlm\n\n"
-                "Example: /withdraw 50 base"
+                "**Usage:** `/withdraw <amount> <method>`\n"
+                "**Methods:** base, ltc, xlm\n\n"
+                "**Example:** `/withdraw 50 base`\n"
+                "**Example:** `/withdraw 25 ltc`"
             )
             return
         
-        amount = float(context.args[0])
-        method = context.args[1].lower()
+        try:
+            amount = float(context.args[0])
+            if amount <= 0:
+                await update.message.reply_text("❌ Amount must be greater than 0.")
+                return
+        except ValueError:
+            await update.message.reply_text("❌ Invalid amount. Please enter a valid number.")
+            return
         
+        method = context.args[1].lower()
         if method not in ['base', 'ltc', 'xlm']:
             await update.message.reply_text("❌ Invalid method. Use: base, ltc, or xlm")
             return
@@ -609,17 +688,22 @@ async def withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn.close()
             return
         
-        wallet_methods = ['base', 'ltc', 'xlm_address']
-        method_index = wallet_methods.index(method) if method in wallet_methods else -1
+        # Get wallet address based on method
+        wallet_address = None
+        if method == 'base' and wallet[1]:
+            wallet_address = wallet[1]
+        elif method == 'ltc' and wallet[2]:
+            wallet_address = wallet[2]
+        elif method == 'xlm' and wallet[3]:
+            wallet_address = wallet[3]
         
-        if method_index == -1 or not wallet[method_index + 1]:
-            await update.message.reply_text(f"❌ {method.upper()} wallet not set!")
+        if not wallet_address:
+            await update.message.reply_text(f"❌ {method.upper()} wallet not set! Please set it using /setwallet")
             conn.close()
             return
         
         # Create withdrawal request
         withdrawal_id = ''.join(random.choices(string.digits, k=8))
-        wallet_address = wallet[method_index + 1]
         
         cursor.execute('''
             INSERT INTO withdrawals (user_id, amount, wallet_address, method, status, withdrawal_id)
@@ -634,7 +718,7 @@ async def withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cursor.execute('''
             INSERT INTO transactions (user_id, type, amount, status, details)
             VALUES (?, 'withdrawal', ?, 'pending', ?)
-        ''', (user_id, amount, f"Withdrawal to {method}: {wallet_address} | ID: {withdrawal_id}"))
+        ''', (user_id, amount, f"Withdrawal to {method.upper()}: {wallet_address} | ID: {withdrawal_id}"))
         
         conn.commit()
         conn.close()
@@ -644,32 +728,32 @@ async def withdraw(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(
                 LOG_CHANNEL,
                 f"🔄 **New Withdrawal Request**\n\n"
-                f"User ID: {user_id}\n"
-                f"Amount: ${amount:.2f}\n"
-                f"Method: {method.upper()}\n"
-                f"Wallet: {wallet_address}\n"
-                f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                f"Withdrawal ID: {withdrawal_id}"
+                f"👤 User ID: `{user_id}`\n"
+                f"💰 Amount: `${amount:.2f}`\n"
+                f"📦 Method: {method.upper()}\n"
+                f"💼 Wallet: `{wallet_address}`\n"
+                f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"🆔 Withdrawal ID: `{withdrawal_id}`"
             )
         except Exception as e:
             logger.error(f"Failed to send log: {e}")
         
-        await loading_animation(update, context, "💰 Processing withdrawal...")
+        await loading_animation(update, context, "Processing withdrawal request...", 3)
         await update.message.reply_text(
-            f"✅ Withdrawal request submitted!\n\n"
-            f"Amount: ${amount:.2f}\n"
-            f"Method: {method.upper()}\n"
-            f"Status: ⏳ Pending\n\n"
-            f"Withdrawal ID: {withdrawal_id}"
+            f"✅ **Withdrawal Request Submitted!**\n\n"
+            f"💰 Amount: `${amount:.2f}`\n"
+            f"📦 Method: {method.upper()}\n"
+            f"💼 Wallet: `{wallet_address}`\n"
+            f"📊 Status: ⏳ Pending Approval\n\n"
+            f"🆔 Withdrawal ID: `{withdrawal_id}`\n\n"
+            f"Your request has been sent for admin approval."
         )
         
-    except ValueError:
-        await update.message.reply_text("❌ Invalid amount. Please enter a valid number.")
     except Exception as e:
         logger.error(f"Withdrawal error: {e}")
-        await update.message.reply_text("❌ An error occurred during withdrawal.")
+        await update.message.reply_text("❌ An error occurred during withdrawal. Please try again.")
 
-# Claim voucher command
+# Claim voucher command - FIXED
 async def claim_voucher(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not context.user_data.get('logged_in'):
@@ -677,13 +761,17 @@ async def claim_voucher(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         if len(context.args) < 1:
-            await update.message.reply_text("Usage: /claim <voucher_code>")
+            await update.message.reply_text(
+                "🎫 **Claim Voucher**\n\n"
+                "**Usage:** `/claim <voucher_code>`\n\n"
+                "**Example:** `/claim ABC123XYZ`"
+            )
             return
         
-        voucher_code = context.args[0]
+        voucher_code = context.args[0].strip().upper()
         user_id = context.user_data['user_id']
         
-        await loading_animation(update, context, "🎫 Claiming voucher...")
+        await loading_animation(update, context, "Checking voucher...", 2)
         
         conn = get_db_connection()
         cursor = conn.cursor()
@@ -706,10 +794,11 @@ async def claim_voucher(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         
         if created_for and created_for != user_id:
-            await update.message.reply_text("❌ This voucher is not for you!")
+            await update.message.reply_text("❌ This voucher is not for your account!")
             conn.close()
             return
         
+        # Check expiration
         expires_datetime = datetime.fromisoformat(expires_at)
         if datetime.now() > expires_datetime:
             cursor.execute("UPDATE vouchers SET status = 'expired' WHERE code = ?", (voucher_code,))
@@ -725,17 +814,22 @@ async def claim_voucher(update: Update, context: ContextTypes.DEFAULT_TYPE):
         cursor.execute('''
             INSERT INTO transactions (user_id, type, amount, status, details)
             VALUES (?, 'voucher_claim', ?, 'completed', ?)
-        ''', (user_id, amount, f"Voucher: {voucher_code}"))
+        ''', (user_id, amount, f"Voucher claimed: {voucher_code}"))
         
         conn.commit()
         conn.close()
         
-        await update.message.reply_text(f"✅ Voucher claimed! ${amount:.2f} added to your balance.")
+        await update.message.reply_text(
+            f"✅ **Voucher Claimed Successfully!**\n\n"
+            f"🎫 Voucher Code: `{voucher_code}`\n"
+            f"💰 Amount: `${amount:.2f}`\n"
+            f"✅ Status: Added to your balance"
+        )
     except Exception as e:
         logger.error(f"Voucher claim error: {e}")
-        await update.message.reply_text("❌ An error occurred while claiming voucher.")
+        await update.message.reply_text("❌ An error occurred while claiming voucher. Please try again.")
 
-# Transaction history command
+# Transaction history command - FIXED
 async def transaction_history(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if not context.user_data.get('logged_in'):
@@ -744,17 +838,21 @@ async def transaction_history(update: Update, context: ContextTypes.DEFAULT_TYPE
         
         user_id = context.user_data['user_id']
         
+        await loading_animation(update, context, "Loading your history...", 2)
+        
         conn = get_db_connection()
         cursor = conn.cursor()
         cursor.execute('''
             SELECT type, amount, status, timestamp, details 
-            FROM transactions WHERE user_id = ? ORDER BY timestamp DESC LIMIT 10
+            FROM transactions WHERE user_id = ? 
+            ORDER BY timestamp DESC LIMIT 10
         ''', (user_id,))
         transactions = cursor.fetchall()
         
         cursor.execute('''
             SELECT amount, method, status, requested_at 
-            FROM withdrawals WHERE user_id = ? AND status = 'pending' ORDER BY requested_at DESC
+            FROM withdrawals WHERE user_id = ? AND status = 'pending' 
+            ORDER BY requested_at DESC
         ''', (user_id,))
         pending_withdrawals = cursor.fetchall()
         conn.close()
@@ -765,44 +863,92 @@ async def transaction_history(update: Update, context: ContextTypes.DEFAULT_TYPE
             for trans in transactions:
                 type_emoji = "📥" if "deposit" in trans[0] else "📤" if "withdrawal" in trans[0] else "🎫"
                 status_emoji = "✅" if trans[2] == "completed" else "⏳" if trans[2] == "pending" else "❌"
-                history_text += f"{type_emoji} {trans[0]}: ${trans[1]:.2f} {status_emoji}\n"
-                history_text += f"   📅 {trans[3]}\n\n"
+                history_text += f"{type_emoji} **{trans[0].replace('_', ' ').title()}:** `${trans[1]:.2f}` {status_emoji}\n"
+                history_text += f"   📅 {trans[3][:16]}\n"
+                if trans[4]:
+                    history_text += f"   📝 {trans[4][:50]}\n"
+                history_text += "\n"
         else:
             history_text += "No transactions found.\n\n"
         
         if pending_withdrawals:
             history_text += "⏳ **Pending Withdrawals**\n\n"
             for withdraw in pending_withdrawals:
-                history_text += f"💰 ${withdraw[0]:.2f} via {withdraw[1].upper()}\n"
-                history_text += f"   📅 {withdraw[3]}\n\n"
+                history_text += f"💰 `${withdraw[0]:.2f}` via {withdraw[1].upper()}\n"
+                history_text += f"   📅 {withdraw[3][:16]}\n\n"
         
-        await loading_animation(update, context, "📜 Loading history...")
         await update.message.reply_text(history_text)
     except Exception as e:
         logger.error(f"History error: {e}")
         await update.message.reply_text("❌ An error occurred while fetching history.")
 
+# Check database command (Today's List) - FIXED
+async def check_database(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        if not context.user_data.get('logged_in'):
+            await update.message.reply_text("Please login first using /login")
+            return
+        
+        user_id = context.user_data['user_id']
+        
+        await loading_animation(update, context, "Loading today's list...", 2)
+        
+        # Check if user has a database file
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT file_path FROM user_database_files WHERE user_id = ?", (user_id,))
+        result = cursor.fetchone()
+        conn.close()
+        
+        if result:
+            file_path = result[0]
+            try:
+                with open(file_path, 'r') as file:
+                    content = file.read().strip()
+                
+                if content:
+                    await update.message.reply_text(f"📋 **Today's List for You:**\n\n{content}")
+                else:
+                    await update.message.reply_text("📋 No data available for today.")
+            except FileNotFoundError:
+                await update.message.reply_text("📋 Database file not found. Contact admin.")
+        else:
+            await update.message.reply_text("📋 No database file set for your account yet.")
+    except Exception as e:
+        logger.error(f"Database check error: {e}")
+        await update.message.reply_text("❌ An error occurred while fetching your database.")
+
 # Support command
 async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🆘 **Support**\n\nContact us via email: gilchy@zohomail.com")
+    await update.message.reply_text(
+        "🆘 **Support**\n\n"
+        "For any issues or questions, contact us via email:\n"
+        "📧 **Email:** gilchy@zohomail.com\n\n"
+        "We'll get back to you as soon as possible."
+    )
 
-# Logout command
+# Logout command - FIXED
 async def logout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if context.user_data.get('logged_in'):
+            user_id = context.user_data['user_id']
             context.user_data.clear()
-            await update.message.reply_text("✅ Logged out successfully!")
+            await update.message.reply_text(
+                f"✅ **Logged out successfully!**\n\n"
+                f"Thank you for using YourBase Bot.\n"
+                f"Use /start to login again."
+            )
         else:
-            await update.message.reply_text("You are not logged in.")
+            await update.message.reply_text("You are not currently logged in.")
     except Exception as e:
         logger.error(f"Logout error: {e}")
         await update.message.reply_text("❌ An error occurred during logout.")
 
 # ===============================
-# ADMIN FUNCTIONS - FULLY IMPLEMENTED
+# ADMIN FUNCTIONS - FIXED AND WORKING
 # ===============================
 
-# Admin panel
+# Admin panel - FIXED
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if update.effective_user.id != ADMIN_ID:
@@ -826,14 +972,14 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await update.message.reply_text(
             "👑 **Admin Panel**\n\n"
-            "Select an option:",
+            "Select an option below:",
             reply_markup=reply_markup
         )
     except Exception as e:
         logger.error(f"Admin panel error: {e}")
         await update.message.reply_text("❌ An error occurred.")
 
-# Generate user login
+# Generate user login - FIXED
 async def generate_user_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await update.callback_query.message.reply_text(
@@ -844,34 +990,34 @@ async def generate_user_login(update: Update, context: ContextTypes.DEFAULT_TYPE
     except Exception as e:
         logger.error(f"Generate login error: {e}")
 
-# Handle user ID for login generation
+# Handle user ID for login generation - FIXED
 async def handle_user_id_for_login(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if context.user_data.get('awaiting_user_id_for_login'):
-            user_id = update.message.text
+            user_input = update.message.text.strip()
             
             try:
-                user_id = int(user_id)
+                user_id = int(user_input)
             except ValueError:
                 await update.message.reply_text("❌ User ID must be a number.")
                 return
             
             # Check if user exists
             if user_exists(user_id):
-                password = get_user_password(user_id)
                 await update.message.reply_text(
-                    f"✅ User already exists!\n\n"
-                    f"User ID: {user_id}\n"
-                    f"Password: {password}"
+                    f"✅ **User Already Exists**\n\n"
+                    f"👤 User ID: `{user_id}`\n"
+                    f"Use reset password if needed."
                 )
             else:
                 # Create new user
-                password = create_user(user_id)
-                if password:
+                plain_password = create_user(user_id)
+                if plain_password:
                     await update.message.reply_text(
-                        f"✅ New user created!\n\n"
-                        f"User ID: {user_id}\n"
-                        f"Password: {password}"
+                        f"✅ **New User Created**\n\n"
+                        f"👤 User ID: `{user_id}`\n"
+                        f"🔑 Password: `{plain_password}`\n\n"
+                        f"The user can now login with /start"
                     )
                 else:
                     await update.message.reply_text("❌ Failed to create user.")
@@ -879,65 +1025,132 @@ async def handle_user_id_for_login(update: Update, context: ContextTypes.DEFAULT
             context.user_data['awaiting_user_id_for_login'] = False
     except Exception as e:
         logger.error(f"Handle user ID for login error: {e}")
+        await update.message.reply_text("❌ An error occurred. Please try again.")
 
-# Set user database
+# Create voucher - FIXED
+async def create_voucher(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        await update.callback_query.message.reply_text(
+            "🎫 **Create Voucher**\n\n"
+            "Send in format: `<amount> <user_id (optional)>`\n\n"
+            "**Examples:**\n"
+            "`50.0` - For all users\n"
+            "`50.0 123456789` - For specific user\n"
+            "`1 6577308099` - $1 for user 6577308099"
+        )
+        context.user_data['awaiting_voucher_creation'] = True
+    except Exception as e:
+        logger.error(f"Create voucher error: {e}")
+
+# Handle voucher creation - FIXED
+async def handle_voucher_creation(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        if context.user_data.get('awaiting_voucher_creation'):
+            user_input = update.message.text.strip()
+            parts = user_input.split()
+            
+            if len(parts) < 1:
+                await update.message.reply_text("❌ Invalid format. Use: <amount> <user_id (optional)>")
+                return
+            
+            # Parse amount (accept both int and float)
+            try:
+                amount = float(parts[0])
+                if amount <= 0:
+                    await update.message.reply_text("❌ Amount must be greater than 0.")
+                    return
+            except ValueError:
+                await update.message.reply_text("❌ Amount must be a valid number.")
+                return
+            
+            # Parse user_id if provided
+            user_id = None
+            if len(parts) > 1:
+                try:
+                    user_id = int(parts[1])
+                    if not user_exists(user_id):
+                        await update.message.reply_text("❌ User not found.")
+                        return
+                except ValueError:
+                    await update.message.reply_text("❌ User ID must be a number.")
+                    return
+            
+            # Generate voucher code
+            code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
+            expires_at = datetime.now() + timedelta(hours=12)
+            
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute('''
+                INSERT INTO vouchers (code, amount, created_by, created_for, expires_at)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (code, amount, ADMIN_ID, user_id, expires_at.isoformat()))
+            
+            conn.commit()
+            conn.close()
+            
+            # Send success message
+            if user_id:
+                message = (
+                    f"✅ **Voucher Created for Specific User**\n\n"
+                    f"👤 User ID: `{user_id}`\n"
+                    f"🎫 Voucher Code: `{code}`\n"
+                    f"💰 Amount: `${amount:.2f}`\n"
+                    f"⏰ Expires: {expires_at.strftime('%Y-%m-%d %H:%M:%S')}"
+                )
+            else:
+                message = (
+                    f"✅ **Voucher Created for All Users**\n\n"
+                    f"🎫 Voucher Code: `{code}`\n"
+                    f"💰 Amount: `${amount:.2f}`\n"
+                    f"⏰ Expires: {expires_at.strftime('%Y-%m-%d %H:%M:%S')}"
+                )
+            
+            await update.message.reply_text(message)
+            context.user_data['awaiting_voucher_creation'] = False
+            
+    except Exception as e:
+        logger.error(f"Handle voucher creation error: {e}")
+        await update.message.reply_text("❌ An error occurred while creating voucher. Please try again.")
+
+# Admin set user database - FIXED
 async def admin_set_database_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await update.callback_query.message.reply_text(
             "📁 **Set User Database**\n\n"
-            "Use: /setuserdb <user_id> <content>\n"
-            "Or: /setuserdb <user_id> and then send content in next message"
+            "Send user_id first, then in next message the content."
         )
+        context.user_data['awaiting_db_user_id'] = True
     except Exception as e:
-        logger.error(f"Admin database menu error: {e}")
+        logger.error(f"Admin set database menu error: {e}")
 
-# Admin set user database
-async def admin_set_user_database(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Handle database user id and content
+async def handle_database_user_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        if update.effective_user.id != ADMIN_ID:
-            await update.message.reply_text("❌ Access denied.")
-            return
-        
-        if len(context.args) < 2:
-            await update.message.reply_text(
-                "📁 **Set User Database File**\n\n"
-                "Usage: /setuserdb <user_id> <file_content>\n"
-                "Or send: /setuserdb <user_id> and then the file content in next message"
-            )
+        if context.user_data.get('awaiting_db_user_id'):
+            user_input = update.message.text.strip()
+            try:
+                user_id = int(user_input)
+            except ValueError:
+                await update.message.reply_text("❌ User ID must be a number.")
+                return
+            
+            if not user_exists(user_id):
+                await update.message.reply_text("❌ User not found.")
+                return
+            
+            context.user_data['target_user_id_for_db'] = user_id
+            context.user_data['awaiting_db_user_id'] = False
             context.user_data['awaiting_db_content'] = True
-            if len(context.args) == 1:
-                context.user_data['target_user_id'] = context.args[0]
-            return
-        
-        user_id = context.args[0]
-        content = ' '.join(context.args[1:])
-        
-        # Save to file
-        file_path = f"user_data/database_{user_id}.txt"
-        with open(file_path, 'w') as file:
-            file.write(content)
-        
-        # Update database
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT OR REPLACE INTO user_database_files (user_id, file_path)
-            VALUES (?, ?)
-        ''', (user_id, file_path))
-        conn.commit()
-        conn.close()
-        
-        await update.message.reply_text(f"✅ Database file set for user {user_id}")
-        
+            await update.message.reply_text("Now send the database content.")
     except Exception as e:
-        logger.error(f"Admin set database error: {e}")
-        await update.message.reply_text("❌ Error setting user database.")
+        logger.error(f"Handle database user id error: {e}")
 
-# Handle database content input
 async def handle_database_content(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        if context.user_data.get('awaiting_db_content') and context.user_data.get('target_user_id'):
-            user_id = context.user_data['target_user_id']
+        if context.user_data.get('awaiting_db_content'):
+            user_id = context.user_data.get('target_user_id_for_db')
             content = update.message.text
             
             # Save to file
@@ -956,790 +1169,426 @@ async def handle_database_content(update: Update, context: ContextTypes.DEFAULT_
             conn.close()
             
             context.user_data['awaiting_db_content'] = False
-            context.user_data['target_user_id'] = None
+            context.user_data['target_user_id_for_db'] = None
             
-            await update.message.reply_text(f"✅ Database file set for user {user_id}")
+            await update.message.reply_text(f"✅ Database file set for user `{user_id}`")
     except Exception as e:
         logger.error(f"Database content handling error: {e}")
         await update.message.reply_text("❌ Error setting user database.")
 
-# Manage balances
-async def manage_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Admin manage balance
+async def admin_manage_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        keyboard = [
-            [InlineKeyboardButton("➕ Add Balance", callback_data="admin_add_balance")],
-            [InlineKeyboardButton("➖ Remove Balance", callback_data="admin_remove_balance")],
-            [InlineKeyboardButton("📊 Check User Balance", callback_data="admin_check_balance")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
         await update.callback_query.message.reply_text(
-            "💰 **Manage User Balance**\n\n"
-            "Select action:",
-            reply_markup=reply_markup
+            "💰 **Manage Balances**\n\n"
+            "Send: add/subtract <user_id> <amount>"
         )
+        context.user_data['awaiting_balance_manage'] = True
     except Exception as e:
-        logger.error(f"Manage balance error: {e}")
+        logger.error(f"Admin manage balance error: {e}")
 
-# Handle balance management
-async def handle_balance_management(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_balance_manage(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        query = update.callback_query
-        await query.answer()
-        
-        if query.data == "admin_add_balance":
-            await query.message.reply_text(
-                "💰 **Add Balance**\n\n"
-                "Send in format: <user_id> <amount>\n"
-                "Example: 123456789 50.0"
-            )
-            context.user_data['balance_action'] = 'add'
-            context.user_data['awaiting_balance_input'] = True
+        if context.user_data.get('awaiting_balance_manage'):
+            user_input = update.message.text.strip()
+            parts = user_input.split()
             
-        elif query.data == "admin_remove_balance":
-            await query.message.reply_text(
-                "💰 **Remove Balance**\n\n"
-                "Send in format: <user_id> <amount>\n"
-                "Example: 123456789 25.0"
-            )
-            context.user_data['balance_action'] = 'remove'
-            context.user_data['awaiting_balance_input'] = True
-            
-        elif query.data == "admin_check_balance":
-            await query.message.reply_text(
-                "📊 **Check User Balance**\n\n"
-                "Send the User ID:"
-            )
-            context.user_data['awaiting_balance_check'] = True
-            
-    except Exception as e:
-        logger.error(f"Handle balance management error: {e}")
-
-# Handle balance input
-async def handle_balance_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if context.user_data.get('awaiting_balance_input'):
-            parts = update.message.text.split()
-            if len(parts) != 2:
-                await update.message.reply_text("❌ Invalid format. Use: <user_id> <amount>")
+            if len(parts) != 3:
+                await update.message.reply_text("❌ Invalid format. Use: add/subtract <user_id> <amount>")
                 return
             
-            user_id, amount = parts
+            action = parts[0].lower()
+            if action not in ['add', 'subtract']:
+                await update.message.reply_text("❌ Invalid action. Use add or subtract.")
+                return
             
             try:
-                user_id = int(user_id)
-                amount = float(amount)
+                user_id = int(parts[1])
+                amount = float(parts[2])
+                if amount <= 0:
+                    await update.message.reply_text("❌ Amount must be positive.")
+                    return
             except ValueError:
-                await update.message.reply_text("❌ User ID must be a number and amount must be a decimal.")
+                await update.message.reply_text("❌ Invalid user_id or amount.")
                 return
             
-            action = context.user_data['balance_action']
-            
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            
-            # Check if user exists
             if not user_exists(user_id):
                 await update.message.reply_text("❌ User not found.")
-                conn.close()
                 return
             
-            # Get current balance
-            cursor.execute("SELECT balance FROM balances WHERE user_id = ?", (user_id,))
-            result = cursor.fetchone()
-            current_balance = result[0] if result else 0
+            conn = get_db_connection()
+            cursor = conn.cursor()
             
             if action == 'add':
-                new_balance = current_balance + amount
-                cursor.execute("UPDATE balances SET balance = ? WHERE user_id = ?", (new_balance, user_id))
-                
-                # Add transaction record
-                cursor.execute('''
-                    INSERT INTO transactions (user_id, type, amount, status, details)
-                    VALUES (?, 'admin_deposit', ?, 'completed', ?)
-                ''', (user_id, amount, f"Admin added balance: ${amount:.2f}"))
-                
-                await update.message.reply_text(
-                    f"✅ Balance added successfully!\n\n"
-                    f"User ID: {user_id}\n"
-                    f"Amount: ${amount:.2f}\n"
-                    f"New Balance: ${new_balance:.2f}"
-                )
-                
-            elif action == 'remove':
-                if current_balance < amount:
-                    await update.message.reply_text("❌ User has insufficient balance.")
-                    conn.close()
-                    return
-                
-                new_balance = current_balance - amount
-                cursor.execute("UPDATE balances SET balance = ? WHERE user_id = ?", (new_balance, user_id))
-                
-                # Add transaction record
-                cursor.execute('''
-                    INSERT INTO transactions (user_id, type, amount, status, details)
-                    VALUES (?, 'admin_withdrawal', ?, 'completed', ?)
-                ''', (user_id, amount, f"Admin removed balance: ${amount:.2f}"))
-                
-                await update.message.reply_text(
-                    f"✅ Balance removed successfully!\n\n"
-                    f"User ID: {user_id}\n"
-                    f"Amount: ${amount:.2f}\n"
-                    f"New Balance: ${new_balance:.2f}"
-                )
-            
-            conn.commit()
-            conn.close()
-            context.user_data['awaiting_balance_input'] = False
-            
-        elif context.user_data.get('awaiting_balance_check'):
-            user_id = update.message.text
-            
-            try:
-                user_id = int(user_id)
-            except ValueError:
-                await update.message.reply_text("❌ User ID must be a number.")
-                return
-            
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("SELECT balance FROM balances WHERE user_id = ?", (user_id,))
-            result = cursor.fetchone()
-            conn.close()
-            
-            if result:
-                balance = result[0]
-                await update.message.reply_text(f"💰 User {user_id} Balance: ${balance:.2f}")
+                cursor.execute("UPDATE balances SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
+                details = f"Admin added {amount}"
+                trans_type = 'deposit'
             else:
-                await update.message.reply_text("❌ User not found.")
-            
-            context.user_data['awaiting_balance_check'] = False
-            
-    except Exception as e:
-        logger.error(f"Handle balance input error: {e}")
-
-# Create voucher
-async def create_voucher(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        await update.callback_query.message.reply_text(
-            "🎫 **Create Voucher**\n\n"
-            "Send in format: <amount> <user_id (optional)>\n"
-            "Examples:\n"
-            "50.0 - For all users\n"
-            "50.0 123456789 - For specific user"
-        )
-        context.user_data['awaiting_voucher_creation'] = True
-    except Exception as e:
-        logger.error(f"Create voucher error: {e}")
-
-# Handle voucher creation
-async def handle_voucher_creation(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if context.user_data.get('awaiting_voucher_creation'):
-            parts = update.message.text.split()
-            if len(parts) < 1:
-                await update.message.reply_text("❌ Invalid format. Use: <amount> <user_id (optional)>")
-                return
-            
-            amount = parts[0]
-            user_id = parts[1] if len(parts) > 1 else None
-            
-            try:
-                amount = float(amount)
-                if user_id:
-                    user_id = int(user_id)
-            except ValueError:
-                await update.message.reply_text("❌ Amount must be decimal and user ID must be number.")
-                return
-            
-            # Generate voucher code
-            code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
-            expires_at = datetime.now() + timedelta(hours=12)
-            
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            
-            if user_id and not user_exists(user_id):
-                await update.message.reply_text("❌ User not found.")
-                conn.close()
-                return
+                cursor.execute("UPDATE balances SET balance = balance - ? WHERE user_id = ?", (amount, user_id))
+                details = f"Admin subtracted {amount}"
+                trans_type = 'adjustment'
             
             cursor.execute('''
-                INSERT INTO vouchers (code, amount, created_by, created_for, expires_at)
-                VALUES (?, ?, ?, ?, ?)
-            ''', (code, amount, ADMIN_ID, user_id, expires_at.isoformat()))
+                INSERT INTO transactions (user_id, type, amount, status, details)
+                VALUES (?, ?, ?, 'completed', ?)
+            ''', (user_id, trans_type, amount if action == 'add' else -amount, details))
             
             conn.commit()
             conn.close()
             
-            if user_id:
-                await update.message.reply_text(
-                    f"✅ Voucher created for user {user_id}!\n\n"
-                    f"Code: {code}\n"
-                    f"Amount: ${amount:.2f}\n"
-                    f"Expires: {expires_at.strftime('%Y-%m-%d %H:%M:%S')}"
-                )
-            else:
-                await update.message.reply_text(
-                    f"✅ Voucher created for all users!\n\n"
-                    f"Code: {code}\n"
-                    f"Amount: ${amount:.2f}\n"
-                    f"Expires: {expires_at.strftime('%Y-%m-%d %H:%M:%S')}"
-                )
-            
-            context.user_data['awaiting_voucher_creation'] = False
-            
+            await update.message.reply_text(f"✅ Balance {action}ed ${amount:.2f} for user {user_id}")
+            context.user_data['awaiting_balance_manage'] = False
     except Exception as e:
-        logger.error(f"Handle voucher creation error: {e}")
+        logger.error(f"Handle balance manage error: {e}")
+        await update.message.reply_text("❌ Error managing balance.")
 
-# User details
-async def user_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Admin user details
+async def admin_user_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await update.callback_query.message.reply_text(
             "📊 **User Details**\n\n"
-            "Send the User ID to get details:"
+            "Send the user_id to get details."
         )
         context.user_data['awaiting_user_details'] = True
     except Exception as e:
-        logger.error(f"User details error: {e}")
+        logger.error(f"Admin user details error: {e}")
 
-# Handle user details
 async def handle_user_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if context.user_data.get('awaiting_user_details'):
-            user_id = update.message.text
-            
+            user_input = update.message.text.strip()
             try:
-                user_id = int(user_id)
+                user_id = int(user_input)
             except ValueError:
                 await update.message.reply_text("❌ User ID must be a number.")
                 return
             
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            
-            # Get user info
-            cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
-            user = cursor.fetchone()
-            
-            if not user:
+            if not user_exists(user_id):
                 await update.message.reply_text("❌ User not found.")
-                conn.close()
                 return
             
-            # Get balance
-            cursor.execute("SELECT balance FROM balances WHERE user_id = ?", (user_id,))
-            balance_result = cursor.fetchone()
-            balance = balance_result[0] if balance_result else 0
-            
-            # Get wallet
-            cursor.execute("SELECT * FROM wallets WHERE user_id = ?", (user_id,))
-            wallet = cursor.fetchone()
-            
-            # Get transaction count
-            cursor.execute("SELECT COUNT(*) FROM transactions WHERE user_id = ?", (user_id,))
-            transaction_count = cursor.fetchone()[0]
-            
-            conn.close()
-            
-            user_details = f"👤 **User Details**\n\n"
-            user_details += f"🆔 User ID: {user[0]}\n"
-            user_details += f"💰 Balance: ${balance:.2f}\n"
-            user_details += f"📅 Created: {user[3]}\n"
-            user_details += f"🔐 Last Login: {user[4] if user[4] else 'Never'}\n"
-            user_details += f"🚫 Banned: {'Yes' if user[2] else 'No'}\n"
-            user_details += f"📊 Transactions: {transaction_count}\n\n"
-            
-            if wallet:
-                user_details += f"💼 **Wallet Details**\n"
-                user_details += f"Base: {wallet[1] if wallet[1] else 'Not set'}\n"
-                user_details += f"LTC: {wallet[2] if wallet[2] else 'Not set'}\n"
-                user_details += f"XLM: {wallet[3] if wallet[3] else 'Not set'}\n"
-                if wallet[4]:
-                    user_details += f"XLM Memo: {wallet[4]}\n"
-            
-            await update.message.reply_text(user_details)
-            context.user_data['awaiting_user_details'] = False
-            
-    except Exception as e:
-        logger.error(f"Handle user details error: {e}")
-
-# Pending withdrawals
-async def pending_withdrawals(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT withdrawal_id, user_id, amount, method, wallet_address, requested_at 
-            FROM withdrawals WHERE status = 'pending' ORDER BY requested_at DESC
-        ''')
-        withdrawals = cursor.fetchall()
-        conn.close()
-        
-        if not withdrawals:
-            await update.callback_query.message.reply_text("✅ No pending withdrawals.")
-            return
-        
-        keyboard = []
-        for withdraw in withdrawals:
-            withdrawal_id, user_id, amount, method, wallet_address, requested_at = withdraw
-            keyboard.append([
-                InlineKeyboardButton(
-                    f"💰 ${amount} - User {user_id}",
-                    callback_data=f"withdraw_detail_{withdrawal_id}"
-                )
-            ])
-        
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.callback_query.message.reply_text(
-            "⏳ **Pending Withdrawals**\n\n"
-            "Select a withdrawal to manage:",
-            reply_markup=reply_markup
-        )
-    except Exception as e:
-        logger.error(f"Pending withdrawals error: {e}")
-
-# Handle withdrawal detail
-async def handle_withdrawal_detail(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        query = update.callback_query
-        await query.answer()
-        
-        withdrawal_id = query.data.replace('withdraw_detail_', '')
-        
-        conn = get_db_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT * FROM withdrawals WHERE withdrawal_id = ?
-        ''', (withdrawal_id,))
-        withdrawal = cursor.fetchone()
-        conn.close()
-        
-        if not withdrawal:
-            await query.message.reply_text("❌ Withdrawal not found.")
-            return
-        
-        _, user_id, amount, wallet_address, method, status, txid, requested_at, processed_at, _ = withdrawal
-        
-        keyboard = [
-            [
-                InlineKeyboardButton("✅ Approve", callback_data=f"approve_{withdrawal_id}"),
-                InlineKeyboardButton("❌ Reject", callback_data=f"reject_{withdrawal_id}")
-            ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await query.message.reply_text(
-            f"💰 **Withdrawal Details**\n\n"
-            f"Withdrawal ID: {withdrawal_id}\n"
-            f"User ID: {user_id}\n"
-            f"Amount: ${amount:.2f}\n"
-            f"Method: {method.upper()}\n"
-            f"Wallet: {wallet_address}\n"
-            f"Requested: {requested_at}\n"
-            f"Status: {status}",
-            reply_markup=reply_markup
-        )
-    except Exception as e:
-        logger.error(f"Handle withdrawal detail error: {e}")
-
-# Handle withdrawal approval/rejection
-async def handle_withdrawal_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        query = update.callback_query
-        await query.answer()
-        
-        data = query.data
-        if data.startswith('approve_'):
-            withdrawal_id = data.replace('approve_', '')
-            await query.message.reply_text(
-                f"✅ Approving withdrawal {withdrawal_id}\n\n"
-                f"Please send the TXID:"
-            )
-            context.user_data['awaiting_txid'] = withdrawal_id
-            context.user_data['withdrawal_action'] = 'approve'
-            
-        elif data.startswith('reject_'):
-            withdrawal_id = data.replace('reject_', '')
-            
             conn = get_db_connection()
             cursor = conn.cursor()
             
-            # Get withdrawal details
-            cursor.execute('''
-                SELECT user_id, amount FROM withdrawals WHERE withdrawal_id = ?
-            ''', (withdrawal_id,))
-            withdrawal = cursor.fetchone()
+            cursor.execute("SELECT is_banned, created_at, last_login, suspended_until, login_attempts FROM users WHERE user_id = ?", (user_id,))
+            user_info = cursor.fetchone()
             
-            if withdrawal:
-                user_id, amount = withdrawal
-                
-                # Update withdrawal status
-                cursor.execute('''
-                    UPDATE withdrawals SET status = 'rejected', processed_at = ?
-                    WHERE withdrawal_id = ?
-                ''', (datetime.now().isoformat(), withdrawal_id))
-                
-                # Refund balance
-                cursor.execute('''
-                    UPDATE balances SET balance = balance + ? WHERE user_id = ?
-                ''', (amount, user_id))
-                
-                # Add transaction record
-                cursor.execute('''
-                    INSERT INTO transactions (user_id, type, amount, status, details)
-                    VALUES (?, 'withdrawal_refund', ?, 'completed', ?)
-                ''', (user_id, amount, f"Withdrawal {withdrawal_id} rejected and refunded"))
-                
-                conn.commit()
-                
-                await query.message.reply_text(f"✅ Withdrawal {withdrawal_id} rejected and balance refunded.")
-                
-                # Notify user
-                try:
-                    await context.bot.send_message(
-                        chat_id=user_id,
-                        text=f"❌ Your withdrawal of ${amount:.2f} has been rejected. Amount refunded to your balance."
-                    )
-                except:
-                    pass
+            cursor.execute("SELECT balance FROM balances WHERE user_id = ?", (user_id,))
+            balance = cursor.fetchone()[0]
+            
+            cursor.execute("SELECT base, ltc, xlm_address, xlm_memo FROM wallets WHERE user_id = ?", (user_id,))
+            wallet = cursor.fetchone()
+            
+            cursor.execute("SELECT file_path FROM user_database_files WHERE user_id = ?", (user_id,))
+            db_file = cursor.fetchone()
             
             conn.close()
+            
+            details = f"📊 **User Details for {user_id}**\n\n"
+            details += f"🚫 Banned: {'Yes' if user_info[0] else 'No'}\n"
+            details += f"📅 Created: {user_info[1][:16]}\n"
+            details += f"🔑 Last Login: {user_info[2][:16] if user_info[2] else 'Never'}\n"
+            details += f"⏳ Suspended Until: {user_info[3][:16] if user_info[3] else 'None'}\n"
+            details += f"🔄 Login Attempts: {user_info[4]}\n"
+            details += f"💰 Balance: ${balance:.2f}\n\n"
+            
+            if wallet:
+                details += "💼 Wallets:\n"
+                if wallet[0]: details += f"• Base: {wallet[0]}\n"
+                if wallet[1]: details += f"• LTC: {wallet[1]}\n"
+                if wallet[2]: details += f"• XLM: {wallet[2]} {f'(Memo: {wallet[3]})' if wallet[3] else ''}\n"
+            else:
+                details += "💼 No wallets set.\n"
+            
+            details += f"\n📋 Database File: {'Set' if db_file else 'Not set'}\n"
+            
+            await update.message.reply_text(details)
+            context.user_data['awaiting_user_details'] = False
+    except Exception as e:
+        logger.error(f"Handle user details error: {e}")
+        await update.message.reply_text("❌ Error fetching user details.")
+
+# Admin pending withdrawals
+async def admin_pending_withdrawals(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        query = update.callback_query
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute('''
+            SELECT id, user_id, amount, method, wallet_address, withdrawal_id, requested_at 
+            FROM withdrawals WHERE status = 'pending' 
+            ORDER BY requested_at DESC
+        ''')
+        pendings = cursor.fetchall()
+        conn.close()
+        
+        if not pendings:
+            await query.message.reply_text("⏳ No pending withdrawals.")
+            return
+        
+        for p in pendings:
+            text = f"⏳ **Pending Withdrawal**\n\n"
+            text += f"🆔 ID: {p[5]}\n"
+            text += f"👤 User: {p[1]}\n"
+            text += f"💰 Amount: ${p[2]:.2f}\n"
+            text += f"📦 Method: {p[3].upper()}\n"
+            text += f"💼 Address: {p[4]}\n"
+            text += f"📅 Requested: {p[6][:16]}\n"
+            
+            keyboard = [
+                [InlineKeyboardButton("✅ Approve", callback_data=f"approve_{p[0]}")],
+                [InlineKeyboardButton("❌ Reject", callback_data=f"reject_{p[0]}")]
+            ]
+            await query.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+    except Exception as e:
+        logger.error(f"Admin pending withdrawals error: {e}")
+        await update.callback_query.message.reply_text("❌ Error fetching pending withdrawals.")
+
+# Handle withdrawal approve/reject
+async def handle_withdrawal_action(update: Update, context: ContextTypes.DEFAULT_TYPE, action, wid):
+    try:
+        query = update.callback_query
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute("SELECT withdrawal_id, user_id, amount FROM withdrawals WHERE id = ?", (wid,))
+        result = cursor.fetchone()
+        if not result:
+            await query.edit_message_text("❌ Withdrawal not found.")
+            conn.close()
+            return
+        
+        w_id, user_id, amount = result
+        
+        if action == 'approve':
+            context.user_data['awaiting_txid'] = wid
+            await query.edit_message_text(query.message.text + "\n\nSend TXID to approve:")
+            conn.close()
+            return
+        
+        elif action == 'reject':
+            cursor.execute("UPDATE withdrawals SET status = 'rejected', processed_at = ? WHERE id = ?", 
+                           (datetime.now().isoformat(), wid))
+            cursor.execute("UPDATE balances SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
+            cursor.execute("UPDATE transactions SET status = 'rejected' WHERE details LIKE ?", (f"%ID: {w_id}%",))
+            conn.commit()
+            conn.close()
+            await query.edit_message_text(query.message.text + "\n\n❌ Rejected")
             
     except Exception as e:
         logger.error(f"Handle withdrawal action error: {e}")
+        await update.callback_query.edit_message_text("❌ Error processing withdrawal.")
 
-# Handle TXID input
-async def handle_txid_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_txid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        if context.user_data.get('awaiting_txid'):
-            withdrawal_id = context.user_data['awaiting_txid']
-            txid = update.message.text
-            action = context.user_data.get('withdrawal_action')
+        if 'awaiting_txid' in context.user_data:
+            txid = update.message.text.strip()
+            wid = context.user_data['awaiting_txid']
             
             conn = get_db_connection()
             cursor = conn.cursor()
             
-            if action == 'approve':
-                # Get withdrawal details
-                cursor.execute('''
-                    SELECT user_id, amount FROM withdrawals WHERE withdrawal_id = ?
-                ''', (withdrawal_id,))
-                withdrawal = cursor.fetchone()
-                
-                if withdrawal:
-                    user_id, amount = withdrawal
-                    
-                    # Update withdrawal status
-                    cursor.execute('''
-                        UPDATE withdrawals SET status = 'approved', processed_at = ?, txid = ?
-                        WHERE withdrawal_id = ?
-                    ''', (datetime.now().isoformat(), txid, withdrawal_id))
-                    
-                    # Add transaction record
-                    cursor.execute('''
-                        INSERT INTO transactions (user_id, type, amount, status, details)
-                        VALUES (?, 'withdrawal_approved', ?, 'completed', ?)
-                    ''', (user_id, amount, f"Withdrawal {withdrawal_id} approved. TXID: {txid}"))
-                    
-                    conn.commit()
-                    
-                    await update.message.reply_text(f"✅ Withdrawal {withdrawal_id} approved with TXID: {txid}")
-                    
-                    # Notify user
-                    try:
-                        await context.bot.send_message(
-                            chat_id=user_id,
-                            text=f"✅ Your withdrawal of ${amount:.2f} has been approved!\nTXID: {txid}"
-                        )
-                    except:
-                        pass
+            cursor.execute("SELECT withdrawal_id FROM withdrawals WHERE id = ?", (wid,))
+            w_id = cursor.fetchone()[0]
             
-            context.user_data['awaiting_txid'] = None
-            context.user_data['withdrawal_action'] = None
+            cursor.execute("UPDATE withdrawals SET status = 'approved', txid = ?, processed_at = ? WHERE id = ?", 
+                           (txid, datetime.now().isoformat(), wid))
+            cursor.execute("UPDATE transactions SET status = 'completed' WHERE details LIKE ?", (f"%ID: {w_id}%",))
+            conn.commit()
             conn.close()
             
+            await update.message.reply_text(f"✅ Approved with TXID: {txid}")
+            context.user_data.pop('awaiting_txid')
     except Exception as e:
-        logger.error(f"Handle TXID input error: {e}")
+        logger.error(f"Handle txid error: {e}")
+        await update.message.reply_text("❌ Error approving withdrawal.")
 
-# Ban/Unban user
-async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Admin ban user
+async def admin_ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        keyboard = [
-            [InlineKeyboardButton("🔨 Ban User", callback_data="admin_ban")],
-            [InlineKeyboardButton("🔓 Unban User", callback_data="admin_unban")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
         await update.callback_query.message.reply_text(
             "🔨 **Ban/Unban User**\n\n"
-            "Select action:",
-            reply_markup=reply_markup
+            "Send: ban/unban <user_id> [reason]"
         )
+        context.user_data['awaiting_ban'] = True
     except Exception as e:
-        logger.error(f"Ban user error: {e}")
+        logger.error(f"Admin ban user error: {e}")
 
-# Handle ban/unban
-async def handle_ban_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        query = update.callback_query
-        await query.answer()
-        
-        if query.data == "admin_ban":
-            await query.message.reply_text(
-                "🔨 **Ban User**\n\n"
-                "Send the User ID to ban:"
-            )
-            context.user_data['ban_action'] = 'ban'
-            context.user_data['awaiting_ban_input'] = True
+        if context.user_data.get('awaiting_ban'):
+            user_input = update.message.text.strip()
+            parts = user_input.split()
             
-        elif query.data == "admin_unban":
-            await query.message.reply_text(
-                "🔓 **Unban User**\n\n"
-                "Send the User ID to unban:"
-            )
-            context.user_data['ban_action'] = 'unban'
-            context.user_data['awaiting_ban_input'] = True
-            
-    except Exception as e:
-        logger.error(f"Handle ban action error: {e}")
-
-# Handle ban input
-async def handle_ban_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        if context.user_data.get('awaiting_ban_input'):
-            user_id = update.message.text
-            action = context.user_data['ban_action']
-            
-            try:
-                user_id = int(user_id)
-            except ValueError:
-                await update.message.reply_text("❌ User ID must be a number.")
+            if len(parts) < 2:
+                await update.message.reply_text("❌ Invalid format. Use: ban/unban <user_id> [reason]")
                 return
             
-            conn = get_db_connection()
-            cursor = conn.cursor()
+            action = parts[0].lower()
+            if action not in ['ban', 'unban']:
+                await update.message.reply_text("❌ Invalid action. Use ban or unban.")
+                return
+            
+            try:
+                user_id = int(parts[1])
+            except ValueError:
+                await update.message.reply_text("❌ Invalid user_id.")
+                return
+            
+            reason = ' '.join(parts[2:]) if len(parts) > 2 else "No reason provided"
             
             if not user_exists(user_id):
                 await update.message.reply_text("❌ User not found.")
-                conn.close()
                 return
+            
+            conn = get_db_connection()
+            cursor = conn.cursor()
             
             if action == 'ban':
                 cursor.execute("UPDATE users SET is_banned = TRUE WHERE user_id = ?", (user_id,))
-                await update.message.reply_text(f"✅ User {user_id} has been banned.")
             else:
                 cursor.execute("UPDATE users SET is_banned = FALSE, suspended_until = NULL WHERE user_id = ?", (user_id,))
-                await update.message.reply_text(f"✅ User {user_id} has been unbanned.")
             
             conn.commit()
             conn.close()
-            context.user_data['awaiting_ban_input'] = False
             
+            await update.message.reply_text(f"✅ User {user_id} {action}ed. Reason: {reason}")
+            context.user_data['awaiting_ban'] = False
     except Exception as e:
-        logger.error(f"Handle ban input error: {e}")
+        logger.error(f"Handle ban error: {e}")
+        await update.message.reply_text("❌ Error banning/unbanning user.")
 
-# Clear database
-async def clear_database(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        keyboard = [
-            [InlineKeyboardButton("🗑️ Clear All Database Files", callback_data="admin_clear_files")],
-            [InlineKeyboardButton("🔄 Reset User Database", callback_data="admin_reset_db")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await update.callback_query.message.reply_text(
-            "🗑️ **Clear Database**\n\n"
-            "Select action:",
-            reply_markup=reply_markup
-        )
-    except Exception as e:
-        logger.error(f"Clear database error: {e}")
-
-# Handle clear database action
-async def handle_clear_database(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        query = update.callback_query
-        await query.answer()
-        
-        if query.data == "admin_clear_files":
-            # Clear all database files
-            import glob
-            files = glob.glob("user_data/*.txt")
-            for file in files:
-                try:
-                    os.remove(file)
-                except:
-                    pass
-            
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM user_database_files")
-            conn.commit()
-            conn.close()
-            
-            await query.message.reply_text("✅ All database files cleared.")
-            
-        elif query.data == "admin_reset_db":
-            # Reset user database table
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM user_database_files")
-            conn.commit()
-            conn.close()
-            
-            await query.message.reply_text("✅ User database reset.")
-            
-    except Exception as e:
-        logger.error(f"Handle clear database error: {e}")
-
-# Manage passwords
-async def manage_passwords(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Admin clear database
+async def admin_clear_database(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await update.callback_query.message.reply_text(
-            "🔑 **Manage Passwords**\n\n"
-            "Send in format: <user_id> <new_password>\n"
-            "Example: 123456789 newpassword123"
+            "🗑️ **Clear User Database**\n\n"
+            "Send the user_id to clear."
         )
-        context.user_data['awaiting_password_change'] = True
+        context.user_data['awaiting_clear_db'] = True
     except Exception as e:
-        logger.error(f"Manage passwords error: {e}")
+        logger.error(f"Admin clear database error: {e}")
 
-# Handle password change
-async def handle_password_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_clear_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        if context.user_data.get('awaiting_password_change'):
-            parts = update.message.text.split()
-            if len(parts) != 2:
-                await update.message.reply_text("❌ Invalid format. Use: <user_id> <new_password>")
-                return
-            
-            user_id, new_password = parts
-            
+        if context.user_data.get('awaiting_clear_db'):
+            user_input = update.message.text.strip()
             try:
-                user_id = int(user_id)
+                user_id = int(user_input)
             except ValueError:
                 await update.message.reply_text("❌ User ID must be a number.")
                 return
             
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            
             if not user_exists(user_id):
                 await update.message.reply_text("❌ User not found.")
-                conn.close()
                 return
             
-            cursor.execute("UPDATE users SET password = ? WHERE user_id = ?", (new_password, user_id))
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM user_database_files WHERE user_id = ?", (user_id,))
             conn.commit()
             conn.close()
             
-            await update.message.reply_text(f"✅ Password for user {user_id} changed successfully.")
-            context.user_data['awaiting_password_change'] = False
+            file_path = f"user_data/database_{user_id}.txt"
+            if os.path.exists(file_path):
+                os.remove(file_path)
             
+            await update.message.reply_text(f"✅ Database cleared for user {user_id}")
+            context.user_data['awaiting_clear_db'] = False
     except Exception as e:
-        logger.error(f"Handle password change error: {e}")
+        logger.error(f"Handle clear db error: {e}")
+        await update.message.reply_text("❌ Error clearing database.")
 
-# Change user wallet
+# Admin manage passwords
+async def admin_manage_passwords(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        await update.callback_query.message.reply_text(
+            "🔑 **Manage Passwords**\n\n"
+            "Send: reset <user_id>"
+        )
+        context.user_data['awaiting_password_manage'] = True
+    except Exception as e:
+        logger.error(f"Admin manage passwords error: {e}")
+
+async def handle_password_manage(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        if context.user_data.get('awaiting_password_manage'):
+            user_input = update.message.text.strip()
+            parts = user_input.split()
+            
+            if len(parts) != 2 or parts[0].lower() != 'reset':
+                await update.message.reply_text("❌ Invalid format. Use: reset <user_id>")
+                return
+            
+            try:
+                user_id = int(parts[1])
+            except ValueError:
+                await update.message.reply_text("❌ Invalid user_id.")
+                return
+            
+            if not user_exists(user_id):
+                await update.message.reply_text("❌ User not found.")
+                return
+            
+            plain_password = ''.join(random.choices(string.ascii_letters + string.digits, k=8))
+            hashed_password = hashlib.sha256(plain_password.encode()).hexdigest()
+            
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("UPDATE users SET password = ? WHERE user_id = ?", (hashed_password, user_id))
+            conn.commit()
+            conn.close()
+            
+            await update.message.reply_text(f"✅ Password reset for user {user_id}\nNew Password: `{plain_password}`")
+            context.user_data['awaiting_password_manage'] = False
+    except Exception as e:
+        logger.error(f"Handle password manage error: {e}")
+        await update.message.reply_text("❌ Error managing password.")
+
+# Admin change user wallet
 async def admin_change_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await update.callback_query.message.reply_text(
             "💼 **Change User Wallet**\n\n"
-            "Send in format: <user_id> <wallet_type> <address> [memo]\n"
-            "Wallet types: base, ltc, xlm\n"
-            "Examples:\n"
-            "123456789 base 0x742d35Cc6634C0532925a3b8D\n"
-            "123456789 ltc LTLnWGpFA9NMYzQpC9ZzK6c\n"
-            "123456789 xlm GD5XCRFGBG4PQGYU4XGXW4 123456"
+            "Send the user_id first."
         )
-        context.user_data['awaiting_wallet_change'] = True
+        context.user_data['awaiting_user_for_wallet'] = True
     except Exception as e:
         logger.error(f"Admin change wallet error: {e}")
 
-# Handle wallet change
-async def handle_wallet_change(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_user_for_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        if context.user_data.get('awaiting_wallet_change'):
-            parts = update.message.text.split()
-            if len(parts) < 3:
-                await update.message.reply_text("❌ Invalid format. Use: <user_id> <wallet_type> <address> [memo]")
-                return
-            
-            user_id = parts[0]
-            wallet_type = parts[1].lower()
-            address = parts[2]
-            memo = parts[3] if len(parts) > 3 else None
-            
+        if context.user_data.get('awaiting_user_for_wallet'):
+            user_input = update.message.text.strip()
             try:
-                user_id = int(user_id)
+                user_id = int(user_input)
             except ValueError:
                 await update.message.reply_text("❌ User ID must be a number.")
                 return
             
-            if wallet_type not in ['base', 'ltc', 'xlm']:
-                await update.message.reply_text("❌ Wallet type must be: base, ltc, or xlm")
-                return
-            
-            conn = get_db_connection()
-            cursor = conn.cursor()
-            
             if not user_exists(user_id):
                 await update.message.reply_text("❌ User not found.")
-                conn.close()
                 return
             
-            # Check if wallet exists
-            cursor.execute("SELECT * FROM wallets WHERE user_id = ?", (user_id,))
-            wallet = cursor.fetchone()
-            
-            if not wallet:
-                # Create new wallet
-                if wallet_type == 'base':
-                    cursor.execute('''
-                        INSERT INTO wallets (user_id, base, ltc, xlm_address, xlm_memo)
-                        VALUES (?, ?, NULL, NULL, NULL)
-                    ''', (user_id, address))
-                elif wallet_type == 'ltc':
-                    cursor.execute('''
-                        INSERT INTO wallets (user_id, base, ltc, xlm_address, xlm_memo)
-                        VALUES (?, NULL, ?, NULL, NULL)
-                    ''', (user_id, address))
-                elif wallet_type == 'xlm':
-                    cursor.execute('''
-                        INSERT INTO wallets (user_id, base, ltc, xlm_address, xlm_memo)
-                        VALUES (?, NULL, NULL, ?, ?)
-                    ''', (user_id, address, memo))
-            else:
-                # Update existing wallet
-                if wallet_type == 'base':
-                    cursor.execute("UPDATE wallets SET base = ? WHERE user_id = ?", (address, user_id))
-                elif wallet_type == 'ltc':
-                    cursor.execute("UPDATE wallets SET ltc = ? WHERE user_id = ?", (address, user_id))
-                elif wallet_type == 'xlm':
-                    cursor.execute("UPDATE wallets SET xlm_address = ?, xlm_memo = ? WHERE user_id = ?", 
-                                 (address, memo, user_id))
-            
-            conn.commit()
-            conn.close()
-            
-            await update.message.reply_text(f"✅ {wallet_type.upper()} wallet for user {user_id} updated successfully.")
-            context.user_data['awaiting_wallet_change'] = False
-            
+            context.user_data['awaiting_wallet_for'] = user_id
+            context.user_data['awaiting_user_for_wallet'] = False
+            await update.message.reply_text("Now send the wallet addresses in the format.")
     except Exception as e:
-        logger.error(f"Handle wallet change error: {e}")
+        logger.error(f"Handle user for wallet error: {e}")
 
-# Broadcast message
-async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# Handle wallet for admin is in handle_wallet_setup with target_user_id
+
+# Admin broadcast
+async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         await update.callback_query.message.reply_text(
             "📢 **Broadcast Message**\n\n"
-            "Send the message to broadcast to all users:"
+            "Send the message to broadcast to all users."
         )
         context.user_data['awaiting_broadcast'] = True
     except Exception as e:
-        logger.error(f"Broadcast message error: {e}")
+        logger.error(f"Admin broadcast error: {e}")
 
-# Handle broadcast
 async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         if context.user_data.get('awaiting_broadcast'):
@@ -1748,40 +1597,24 @@ async def handle_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
             conn = get_db_connection()
             cursor = conn.cursor()
             cursor.execute("SELECT user_id FROM users")
-            users = cursor.fetchall()
+            users = [row[0] for row in cursor.fetchall()]
             conn.close()
             
             sent_count = 0
-            failed_count = 0
-            
-            await update.message.reply_text(f"📢 Broadcasting to {len(users)} users...")
-            
-            for user in users:
-                user_id = user[0]
+            for user_id in users:
                 try:
-                    await context.bot.send_message(
-                        chat_id=user_id,
-                        text=f"📢 **Broadcast Message**\n\n{message}"
-                    )
+                    await context.bot.send_message(chat_id=user_id, text=message)
                     sent_count += 1
                 except Exception as e:
-                    failed_count += 1
-                
-                # Small delay to avoid rate limiting
-                await asyncio.sleep(0.1)
+                    logger.error(f"Failed to send broadcast to {user_id}: {e}")
             
-            await update.message.reply_text(
-                f"✅ Broadcast completed!\n\n"
-                f"✅ Sent: {sent_count}\n"
-                f"❌ Failed: {failed_count}"
-            )
-            
+            await update.message.reply_text(f"✅ Broadcast sent to {sent_count} users.")
             context.user_data['awaiting_broadcast'] = False
-            
     except Exception as e:
         logger.error(f"Handle broadcast error: {e}")
+        await update.message.reply_text("❌ Error sending broadcast.")
 
-# Handle callback queries
+# Handle callback queries - FIXED
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         query = update.callback_query
@@ -1797,7 +1630,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif data == "withdraw":
             await query.message.reply_text("Use: /withdraw <amount> <method>")
         elif data == "claim":
-            await claim_voucher(update, context)
+            await query.message.reply_text("Use: /claim <voucher_code>")
         elif data == "history":
             await transaction_history(update, context)
         elif data == "database":
@@ -1818,41 +1651,33 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif data == "admin_set_database":
                 await admin_set_database_menu(update, context)
             elif data == "admin_manage_balance":
-                await manage_balance(update, context)
+                await admin_manage_balance(update, context)
             elif data == "admin_create_voucher":
                 await create_voucher(update, context)
             elif data == "admin_user_details":
-                await user_details(update, context)
+                await admin_user_details(update, context)
             elif data == "admin_pending_withdrawals":
-                await pending_withdrawals(update, context)
+                await admin_pending_withdrawals(update, context)
             elif data == "admin_ban_user":
-                await ban_user(update, context)
+                await admin_ban_user(update, context)
             elif data == "admin_clear_database":
-                await clear_database(update, context)
+                await admin_clear_database(update, context)
             elif data == "admin_manage_passwords":
-                await manage_passwords(update, context)
+                await admin_manage_passwords(update, context)
             elif data == "admin_change_wallet":
                 await admin_change_wallet(update, context)
             elif data == "admin_broadcast":
-                await broadcast_message(update, context)
+                await admin_broadcast(update, context)
+        
+        # Withdrawal actions
+        elif data.startswith("approve_") or data.startswith("reject_"):
+            if update.effective_user.id != ADMIN_ID:
+                return
             
-            # Balance management sub-callbacks
-            elif data in ["admin_add_balance", "admin_remove_balance", "admin_check_balance"]:
-                await handle_balance_management(update, context)
-            
-            # Ban management sub-callbacks
-            elif data in ["admin_ban", "admin_unban"]:
-                await handle_ban_action(update, context)
-            
-            # Clear database sub-callbacks
-            elif data in ["admin_clear_files", "admin_reset_db"]:
-                await handle_clear_database(update, context)
-            
-            # Withdrawal management
-            elif data.startswith("withdraw_detail_"):
-                await handle_withdrawal_detail(update, context)
-            elif data.startswith("approve_") or data.startswith("reject_"):
-                await handle_withdrawal_action(update, context)
+            parts = data.split("_")
+            action = parts[0]
+            wid = int(parts[1])
+            await handle_withdrawal_action(update, context, action, wid)
                 
     except Exception as e:
         logger.error(f"Callback handling error: {e}")
@@ -1860,6 +1685,60 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.callback_query.message.reply_text("❌ An error occurred.")
         except:
             pass
+
+# Handle all text messages - FIXED
+async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        user_id = update.effective_user.id
+        text = update.message.text
+        
+        # Check what state the user is in
+        if context.user_data.get('awaiting_password'):
+            await handle_password(update, context)
+        elif context.user_data.get('setting_wallet'):
+            await handle_wallet_setup(update, context)
+        elif context.user_data.get('awaiting_user_id_for_login'):
+            await handle_user_id_for_login(update, context)
+        elif context.user_data.get('awaiting_voucher_creation'):
+            await handle_voucher_creation(update, context)
+        elif context.user_data.get('awaiting_db_user_id'):
+            await handle_database_user_id(update, context)
+        elif context.user_data.get('awaiting_db_content'):
+            await handle_database_content(update, context)
+        elif context.user_data.get('awaiting_balance_manage'):
+            await handle_balance_manage(update, context)
+        elif context.user_data.get('awaiting_user_details'):
+            await handle_user_details(update, context)
+        elif context.user_data.get('awaiting_txid'):
+            await handle_txid(update, context)
+        elif context.user_data.get('awaiting_ban'):
+            await handle_ban(update, context)
+        elif context.user_data.get('awaiting_clear_db'):
+            await handle_clear_db(update, context)
+        elif context.user_data.get('awaiting_password_manage'):
+            await handle_password_manage(update, context)
+        elif context.user_data.get('awaiting_user_for_wallet'):
+            await handle_user_for_wallet(update, context)
+        elif context.user_data.get('awaiting_wallet_for'):
+            await handle_wallet_setup(update, context, context.user_data['awaiting_wallet_for'])
+            context.user_data.pop('awaiting_wallet_for')
+        elif context.user_data.get('awaiting_broadcast'):
+            await handle_broadcast(update, context)
+        elif 'captcha_answer' in context.user_data:
+            await handle_captcha(update, context)
+        else:
+            # If no specific state, check if it's a math answer for captcha
+            try:
+                int(text.strip())
+                if 'captcha_answer' in context.user_data:
+                    await handle_captcha(update, context)
+            except ValueError:
+                pass
+            await update.message.reply_text("Please use commands or select options.")
+                
+    except Exception as e:
+        logger.error(f"Handle all messages error: {e}")
+        await update.message.reply_text("❌ An error occurred. Please try again.")
 
 def main():
     # Initialize database
@@ -1871,7 +1750,7 @@ def main():
     # Add error handler
     application.add_error_handler(error_handler)
     
-    # Add handlers
+    # Add command handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("login", login))
     application.add_handler(CommandHandler("balance", balance))
@@ -1883,30 +1762,21 @@ def main():
     application.add_handler(CommandHandler("support", support))
     application.add_handler(CommandHandler("logout", logout))
     application.add_handler(CommandHandler("admin", admin_panel))
-    application.add_handler(CommandHandler("setuserdb", admin_set_user_database))
     
-    # Message handlers
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_captcha))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_password))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_wallet_setup))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_database_content))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_id_for_login))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_balance_input))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_voucher_creation))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_details))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_txid_input))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ban_input))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_password_change))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_wallet_change))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_broadcast))
+    # Add message handler for all text messages
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_all_messages))
     
-    # Callback query handler
+    # Add callback query handler
     application.add_handler(CallbackQueryHandler(handle_callback))
     
     # Start bot
-    print("🤖 Bot is running with complete admin features...")
+    print("🤖 YourBase Bot is running...")
+    print("✅ Database initialized")
     print("👑 Admin ID:", ADMIN_ID)
     print("📊 Log Channel:", LOG_CHANNEL)
+    print("⏰ Timezone:", TIMEZONE)
+    print("🚀 Bot is ready!")
+    
     application.run_polling()
 
 if __name__ == '__main__':
