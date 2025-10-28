@@ -53,7 +53,7 @@ async def monitor_ranges():
     chrome_options = Options()
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_argument("--start-maximized")
-    chrome_options.add_argument("--headless=new")  # optional headless
+    # chrome_options.add_argument("--headless=new")  # ❌ comment out for manual login
 
     driver = webdriver.Chrome(options=chrome_options)
     driver.get(LOGIN_URL)
