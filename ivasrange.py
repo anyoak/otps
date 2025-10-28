@@ -2,7 +2,6 @@ import asyncio
 import time
 import html
 import pycountry
-import requests
 from bs4 import BeautifulSoup
 from aiogram import Bot, Dispatcher
 from selenium import webdriver
@@ -14,28 +13,24 @@ GROUP_ID = -1002631004312
 LOGIN_URL = "https://www.ivasms.com/login"
 PORTAL_URL = "https://www.ivasms.com/portal"
 TARGET_URL = "https://www.ivasms.com/portal/sms/test/sms?app=Telegram"
-CHECK_INTERVAL = 10  # seconds
-RUN_DURATION = 300   # seconds (5 minutes)
+CHECK_INTERVAL = 10
+RUN_DURATION = 300
 
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot)
-
+dp = Dispatcher()  # ✅ new style (aiogram v3)
 
 def country_to_flag(country_name):
-    """Convert country name to emoji flag."""
     try:
         country = pycountry.countries.lookup(country_name.strip())
         code = country.alpha_2.upper()
         return ''.join(chr(127397 + ord(c)) for c in code)
     except:
-        return "🏳️‍🌈"
-
+        return "🏳️‍"
 
 async def wait_for_login(driver):
-    """Wait until user successfully logs in (portal URL visible)."""
     print("🕓 Waiting for successful login...")
     start_time = time.time()
-    while time.time() - start_time < 180:  # wait up to 3 minutes
+    while time.time() - start_time < 180:
         current_url = driver.current_url
         if current_url.startswith(PORTAL_URL):
             print("✅ Login successful! Starting monitor...")
@@ -44,9 +39,7 @@ async def wait_for_login(driver):
     print("❌ Login timeout (3 minutes). Exiting.")
     return False
 
-
 async def monitor(driver):
-    """Monitor IVASMS page every 10 seconds and send updates to Telegram."""
     print("🔁 Monitoring started for 300 seconds...")
     start_time = time.time()
 
@@ -68,11 +61,9 @@ async def monitor(driver):
                     continue
                 range_name = cols[0]
                 test_number = cols[1]
-                sid = cols[2]
                 recv_time = cols[4]
                 flag = country_to_flag(range_name.split()[0])
 
-                # Message format with your original emojis & Markdown copy text
                 text = (
                     f"╔═━IVASMS NEW RANGE  ◥◣◆◢◤ ━━━━━━━━━═╗\n"
                     f"┣{flag} RANE: `{html.escape(range_name)}`\n"
@@ -96,12 +87,9 @@ async def monitor(driver):
 
     print("🕒 Monitoring stopped after 300 seconds.")
 
-
 async def main():
     print("🌐 Opening browser for manual login...")
     chrome_options = Options()
-    # Comment out this line if you want GUI visible
-    # chrome_options.add_argument("--headless")
     driver = webdriver.Chrome(options=chrome_options)
     driver.get(LOGIN_URL)
 
@@ -112,7 +100,6 @@ async def main():
     if login_success:
         await monitor(driver)
     driver.quit()
-
 
 if __name__ == "__main__":
     asyncio.run(main())
