@@ -1,105 +1,105 @@
 import asyncio
 import time
 import html
-import pycountry
-from bs4 import BeautifulSoup
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, types
+from aiogram.filters import Command
+from aiogram.enums import ParseMode
+from aiogram.types import Message
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+import re
 
-# --- CONFIG ---
-BOT_TOKEN = "8335302596:AAFDsN1hRYLvFVawMIrZiJU8o1wpaTBaZIU"
-GROUP_ID = -1002631004312
+# ==== CONFIGURATION ====
+BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"      # Replace with your bot token
+GROUP_ID = -1001234567890              # Replace with your Telegram group/channel ID
 LOGIN_URL = "https://www.ivasms.com/login"
 PORTAL_URL = "https://www.ivasms.com/portal"
-TARGET_URL = "https://www.ivasms.com/portal/sms/test/sms?app=Telegram"
-CHECK_INTERVAL = 10
-RUN_DURATION = 300
+MONITOR_URL = "https://www.ivasms.com/portal/sms/test/sms?app=Telegram"
+LOGIN_TIMEOUT = 300                     # seconds
 
 bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher()  # ✅ new style (aiogram v3)
+dp = Dispatcher(bot=bot)
 
-def country_to_flag(country_name):
+# Cache to prevent reposting the same entries
+posted_ranges = set()
+
+# ==== COUNTRY FLAG FUNCTION ====
+def get_flag_emoji(country_code):
     try:
-        country = pycountry.countries.lookup(country_name.strip())
-        code = country.alpha_2.upper()
-        return ''.join(chr(127397 + ord(c)) for c in code)
+        return chr(127397 + ord(country_code[0])) + chr(127397 + ord(country_code[1]))
     except:
-        return "🏳️‍"
+        return "🌍"  # fallback globe emoji
 
-async def wait_for_login(driver):
-    print("🕓 Waiting for successful login...")
-    start_time = time.time()
-    while time.time() - start_time < 180:
-        current_url = driver.current_url
-        if current_url.startswith(PORTAL_URL):
-            print("✅ Login successful! Starting monitor...")
-            return True
-        await asyncio.sleep(2)
-    print("❌ Login timeout (3 minutes). Exiting.")
-    return False
+# ==== TELEGRAM MESSAGE STYLE ====
+def format_message(flag, range_name, test_number):
+    recv_time = time.strftime("%Y-%m-%d %H:%M:%S")
+    return (
+        f"╔═━IVASMS NEW RANGE━━═╗\n"
+        f"┣{flag} RANE: `{html.escape(range_name)}`\n"
+        f"┣🕓 TIMR     ➜ {recv_time}\n"
+        f"┣🌐 SID      ➜ TELEGRAM\n"
+        f"┣☎️ TEST NO. ➜ `{html.escape(test_number)}`\n"
+        f"┣💬 DEV.     ➜ @professor_cry\n"
+        "╚═━━━━ ◢◤◆◥◣ ━━━━═╝"
+    )
 
-async def monitor(driver):
-    print("🔁 Monitoring started for 300 seconds...")
-    start_time = time.time()
+# ==== COMMANDS ====
+@dp.message(Command("start"))
+async def start_handler(message: Message):
+    await message.answer("🧭 Monitoring will begin once you log in manually...")
 
-    while (time.time() - start_time) < RUN_DURATION:
-        try:
-            driver.get(TARGET_URL)
-            await asyncio.sleep(3)
-            html_source = driver.page_source
-            soup = BeautifulSoup(html_source, "html.parser")
-            table = soup.find("table")
-            if not table:
-                await asyncio.sleep(CHECK_INTERVAL)
-                continue
-
-            rows = table.find_all("tr")[1:]
-            for row in rows:
-                cols = [c.text.strip() for c in row.find_all("td")]
-                if len(cols) < 5:
-                    continue
-                range_name = cols[0]
-                test_number = cols[1]
-                recv_time = cols[4]
-                flag = country_to_flag(range_name.split()[0])
-
-                text = (
-                    f"╔═━IVASMS NEW RANGE  ◥◣◆◢◤ ━━━━━━━━━═╗\n"
-                    f"┣{flag} RANE: `{html.escape(range_name)}`\n"
-                    f"┣🕓 TIMR     ➜ {recv_time}\n"
-                    f"┣🌐 SID      ➜ TELEGRAM\n"
-                    f"┣☎️ TEST NO. ➜ `{html.escape(test_number)}`\n"
-                    f"┣💬 DEV.     ➜ @professor_cry\n"
-                    f"╚═━━━━━━━━━ ◢◤◆◥◣ ━━━━━━━━━═╝"
-                )
-
-                try:
-                    await bot.send_message(GROUP_ID, text, parse_mode="Markdown")
-                except Exception as e:
-                    print("⚠️ Telegram send error:", e)
-
-            await asyncio.sleep(CHECK_INTERVAL)
-
-        except Exception as e:
-            print("⚠️ Monitor error:", e)
-            await asyncio.sleep(CHECK_INTERVAL)
-
-    print("🕒 Monitoring stopped after 300 seconds.")
-
-async def main():
-    print("🌐 Opening browser for manual login...")
+# ==== MAIN MONITORING LOGIC ====
+async def monitor_ranges():
     chrome_options = Options()
+    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    chrome_options.add_argument("--start-maximized")
+    chrome_options.add_argument("--headless=new")  # optional headless
+
     driver = webdriver.Chrome(options=chrome_options)
     driver.get(LOGIN_URL)
+    print("🔑 Please log in manually... Waiting up to 300 seconds.")
 
-    print("\n🔑 Please login manually in the browser window.")
-    print("When the URL becomes 'https://www.ivasms.com/portal', monitoring will start automatically.\n")
+    # Wait for login success
+    start_time = time.time()
+    while time.time() - start_time < LOGIN_TIMEOUT:
+        current_url = driver.current_url
+        if current_url.startswith(PORTAL_URL):
+            print("✅ Login successful!")
+            break
+        await asyncio.sleep(3)
+    else:
+        print("❌ Login timeout. Please try again.")
+        driver.quit()
+        return
 
-    login_success = await wait_for_login(driver)
-    if login_success:
-        await monitor(driver)
-    driver.quit()
+    driver.get(MONITOR_URL)
+    print("📡 Monitoring started...")
+
+    while True:
+        try:
+            await asyncio.sleep(5)
+            driver.refresh()
+            html_content = driver.page_source
+
+            # Regex to match country code, range name, test number
+            matches = re.findall(r'>([A-Z]{2})\s*-\s*([A-Za-z0-9\s]+).*?(\+\d{6,15})', html_content)
+            for country_code, range_name, test_no in matches:
+                key = f"{country_code}-{range_name}-{test_no}"
+                if key not in posted_ranges:
+                    posted_ranges.add(key)
+                    flag = get_flag_emoji(country_code)
+                    msg = format_message(flag, range_name.strip(), test_no.strip())
+                    await bot.send_message(GROUP_ID, msg, parse_mode=ParseMode.MARKDOWN_V2)
+                    print(f"✅ Posted new range: {key}")
+
+        except Exception as e:
+            print("⚠️ Error during monitoring:", e)
+            await asyncio.sleep(10)
+
+# ==== MAIN ====
+async def main():
+    asyncio.create_task(monitor_ranges())
+    await dp.start_polling(bot)
 
 if __name__ == "__main__":
     asyncio.run(main())
