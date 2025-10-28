@@ -10,7 +10,7 @@ from selenium.webdriver.chrome.options import Options
 import re
 
 # ==== CONFIGURATION ====
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"      # Replace with your bot token
+BOT_TOKEN = "8335302596:AAFDsN1hRYLvFVawMIrZiJU8o1wpaTBaZIU"      # Replace with your bot token
 GROUP_ID = -1001234567890              # Replace with your Telegram group/channel ID
 LOGIN_URL = "https://www.ivasms.com/login"
 PORTAL_URL = "https://www.ivasms.com/portal"
