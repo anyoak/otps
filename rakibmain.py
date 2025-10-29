@@ -86,15 +86,15 @@ def send_to_telegram(number, country_name, country_flag, service, masked_number,
         ]
     }
 
-    # আপনার চেয়ে মোড়া ফরম্যাট
+    # আপনার চেয়ে মোড়া ফরম্যাট - FIXED SYNTAX
     formatted = (
-        f"🚀 {country_name} {service} Otp Receive\n"
-        f"┣⏰ **Time:** {timestamp.strftime('%Y-%m-%d %H:%M:%S')}\n"
-        f"┣{country_flag} **Country:** {country_name}\n"
-        f"┣⚙️ **CLI:** `{service}`\n"
-        f"┣☎️ **Number:** `{masked_number}`\n\n"
-        f"🔑 **OTP:** `{otp_code}`\n\n
-        f"┣📩 **Full Message:**\n"
+        f"{country_flag} {country_name} {service} OTP RECEIVED\n"
+        f"⏰ **Time:** {timestamp.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"{country_flag} **Country:** {country_name}\n"
+        f"⚙️ **CLI:** `{service}`\n"
+        f"☎️ **Number:** `{masked_number}`\n\n"
+        f"🔑 **OTP:** `{otp_code}`\n\n"
+        f"📩 **Full Message:**\n"
         f"```{message.strip()}```"
     )
 
