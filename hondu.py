@@ -1,156 +1,186 @@
-# forwarder.py
-import asyncio
 import time
-import html
 import re
-import logging
+import requests
+from datetime import datetime
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from aiogram import Bot
-from aiogram.enums import ParseMode
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+import phonenumbers
+from phonenumbers import geocoder, region_code_for_number
+import pycountry
+import config  # BOT_TOKEN, CHAT_ID, SMS_URL
 
-# ----------------------------------------------------------------------
-# Load config
-# ----------------------------------------------------------------------
-from config import (
-    BOT_TOKEN, GROUP_ID, LOGIN_URL, PORTAL_URL,
-    MONITOR_URL, LOGIN_TIMEOUT
-)
+# Store sent messages to avoid duplicates
+last_messages = set()
 
-# ----------------------------------------------------------------------
-# Global state
-# ----------------------------------------------------------------------
-posted_keys = set()
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-)
+# ------------------- Helper Functions -------------------
 
-# ----------------------------------------------------------------------
-# Helper: country flag emoji
-# ----------------------------------------------------------------------
-def flag_emoji(country_code: str) -> str:
-    if len(country_code) != 2:
-        return "Globe"
+def mask_number(number: str) -> str:
+    digits = re.sub(r"\D", "", number)
+    if len(digits) > 6:
+        return digits[:4] + "***" + digits[-3:]
+    return number
+
+def country_to_flag(country_code: str) -> str:
+    if not country_code or len(country_code) != 2:
+        return "🏳️"
+    return "".join(chr(127397 + ord(c)) for c in country_code.upper())
+
+def detect_country(number: str):
     try:
-        return "".join(chr(0x1F1E6 + ord(c) - ord('A')) for c in country_code.upper())
-    except Exception:
-        return "Globe"
+        parsed = phonenumbers.parse("+" + number, None)
+        region = region_code_for_number(parsed)
+        country = pycountry.countries.get(alpha_2=region)
+        if country:
+            return country.name, country_to_flag(region)
+    except:
+        pass
+    return "Unknown", "🏳️"
 
-# ----------------------------------------------------------------------
-# Message builder (HTML)
-# ----------------------------------------------------------------------
-def build_message(flag: str, range_name: str, test_number: str) -> str:
-    recv_time = time.strftime("%Y-%m-%d %H:%M:%S")
-    return (
-        "<b>╔═━IVASMS NEW RANGE━━═╗</b>\n"
-        f"<pre>{flag} RANE: {html.escape(range_name)}</pre>\n"
-        f"<pre>Time     ➜ {recv_time}</pre>\n"
-        "<pre>Source      ➜ TELEGRAM</pre>\n"
-        f"<pre>Test NO. ➜ {html.escape(test_number)}</pre>\n"
-        "<pre>DEV.     ➜ @professor_cry</pre>\n"
-        "<b>╚═━━━━ ◢◤◆◥◣ ━━━━═╝</b>"
-    )
+def extract_otp(message: str) -> str:
+    patterns = [r'\b\d{3}-\d{3}\b', r'\b\d{3} \d{3}\b', r'\b\d{6}\b',
+                r'\b\d{4}\b', r'\b\d{5}\b', r'\b\d{7}\b', r'\b\d{8}\b']
+    for pattern in patterns:
+        match = re.search(pattern, message)
+        if match:
+            return re.sub(r'\D', '', match.group(0))
+    return "N/A"
 
-# ----------------------------------------------------------------------
-# Manual login (once) → keep driver alive
-# ----------------------------------------------------------------------
-def init_driver() -> webdriver.Chrome:
-    opts = Options()
-    opts.add_argument("--start-maximized")
-    opts.add_argument("--disable-blink-features=AutomationControlled")
-    opts.add_argument("--no-sandbox")
-    opts.add_argument("--disable-dev-shm-usage")
-    # keep headless **OFF** – you need to see the page for login
-    # opts.add_argument("--headless=new")
+def send_to_telegram(text: str):
+    url = f"https://api.telegram.org/bot{config.BOT_TOKEN}/sendMessage"
+    keyboard = {
+        "inline_keyboard": [
+            [{"text": "🤖 Number Buy", "url": "https://t.me/atik203412"},
+             {"text": "✨ Support Group", "url": "https://t.me/atikmethod_zone"}],
+            [{"text": "🔗 Main Channel", "url": "https://t.me/atik_method_zone"},
+             {"text": "🔗 Backup Channel", "url": "https://t.me/+8REFroGEWNM5ZjE9"}]
+        ]
+    }
+    payload = {
+        "chat_id": config.CHAT_ID,
+        "text": text,
+        "parse_mode": "Markdown",
+        "reply_markup": keyboard,
+    }
+    try:
+        res = requests.post(url, json=payload, timeout=10)
+        if res.status_code == 200:
+            print("[✅] Telegram message sent.")
+        else:
+            print(f"[❌] Failed: {res.status_code} - {res.text}")
+    except Exception as e:
+        print(f"[❌] Telegram error: {e}")
 
-    service = Service(executable_path="chromedriver")   # same folder or in PATH
-    driver = webdriver.Chrome(service=service, options=opts)
-    return driver
+# ------------------- Core Extraction -------------------
 
-# ----------------------------------------------------------------------
-# Extract rows from current page source
-# ----------------------------------------------------------------------
-def extract_new_ranges(html_content: str):
-    """
-    Example row in the page:
-        <td>US - New York</td> ... <td>+1234567890</td>
-    The regex is tolerant to extra spaces / HTML tags.
-    """
-    pattern = r'>([A-Z]{2})\s*-\s*([^<]+?)\s*<[^>]*>\s*(\+\d{6,15})'
-    matches = re.findall(pattern, html_content, re.DOTALL)
+def detect_columns(header_row):
+    """Map NUMBER, SENDER, MESSAGE column dynamically"""
+    mapping = {"number": 0, "sender": 0, "message": 0}  # default
+    try:
+        cells = header_row.find_elements(By.CSS_SELECTOR, "div[role='columnheader'], div[role='cell']")
+        for idx, cell in enumerate(cells):
+            text = cell.text.lower()
+            if "number" in text:
+                mapping["number"] = idx
+            elif "sender" in text:
+                mapping["sender"] = idx
+            elif "message" in text:
+                mapping["message"] = idx
+    except:
+        pass
+    return mapping
 
-    new_entries = []
-    for cc, rng, test in matches:
-        rng = rng.strip()
-        test = test.strip()
-        key = f"{cc}-{rng}-{test}"
-        if key not in posted_keys:
-            posted_keys.add(key)
-            new_entries.append((cc, rng, test))
-    return new_entries
+def extract_sms(driver):
+    global last_messages
+    try:
+        # Wait for table
+        scrollable_div = WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "div[role='table']"))
+        )
 
-# ----------------------------------------------------------------------
-# Main loop – refresh every 10 seconds
-# ----------------------------------------------------------------------
-async def monitor_with_refresh():
-    bot = Bot(token=BOT_TOKEN)
-    driver = init_driver()
+        # Scroll table fully
+        last_height = driver.execute_script("return arguments[0].scrollHeight", scrollable_div)
+        while True:
+            driver.execute_script("arguments[0].scrollTop = arguments[0].scrollHeight", scrollable_div)
+            time.sleep(1)
+            new_height = driver.execute_script("return arguments[0].scrollHeight", scrollable_div)
+            if new_height == last_height:
+                break
+            last_height = new_height
 
-    # ---------- 1. Manual login ----------
-    driver.get(LOGIN_URL)
-    logging.info("Browser opened – please log in manually.")
-    logging.info(f"Waiting up to {LOGIN_TIMEOUT}s for portal redirect…")
+        # Fetch all rows
+        rows = scrollable_div.find_elements(By.CSS_SELECTOR, "div[role='row']")
+        if not rows:
+            print("[⚠️] No rows found.")
+            return
 
-    start = time.time()
-    while time.time() - start < LOGIN_TIMEOUT:
-        if driver.current_url.startswith(PORTAL_URL):
-            logging.info("Login successful!")
-            break
-        await asyncio.sleep(2)
-    else:
-        logging.error("Login timeout – exiting.")
-        driver.quit()
-        return
+        mapping = detect_columns(rows[0])
+        new_count = 0
 
-    # ---------- 2. Open monitor page ----------
-    driver.get(MONITOR_URL)
-    logging.info("Monitor page loaded – starting 10-second refresh loop…")
+        for row in rows[1:]:
+            try:
+                cells = row.find_elements(By.CSS_SELECTOR, "div[role='cell']")
+                if len(cells) < 7:
+                    continue
 
-    # ---------- 3. Infinite refresh + parse ----------
-    while True:
-        try:
-            # Refresh page
-            driver.refresh()
-            await asyncio.sleep(1)          # give JS a moment to render
+                number = cells[mapping["number"]].text.strip()
+                sender = cells[mapping["sender"]].text.strip()
+                message = cells[mapping["message"]].text.strip()
 
-            html_content = driver.page_source
-            new_ranges = extract_new_ranges(html_content)
+                if not message or message in last_messages:
+                    continue
+                last_messages.add(message)
+                new_count += 1
 
-            for cc, rng, test in new_ranges:
-                flag = flag_emoji(cc)
-                msg = build_message(flag, rng, test)
-                await bot.send_message(
-                    chat_id=GROUP_ID,
-                    text=msg,
-                    parse_mode=ParseMode.HTML,
-                    disable_web_page_preview=True,
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                otp_code = extract_otp(message)
+                country_name, country_flag = detect_country(number)
+                masked_number = mask_number(number)
+
+                formatted = (
+                    f"🔥 **New OTP Captured! ({sender}) {country_flag}**\n\n"
+                    f"🕒 **Time:** {timestamp}\n"
+                    f"{country_flag} **Country:** {country_name}\n"
+                    f"🌐 **Sender:** {sender}\n"
+                    f"📞 **Number:** `{masked_number}`\n"
+                    f"🔐 **OTP:** `{otp_code}`\n\n"
+                    f"💬 **Full Message:**\n"
+                    f"```{message}```"
                 )
-                logging.info(f"Posted: {cc} – {rng} – {test}")
+                send_to_telegram(formatted)
+            except:
+                continue
 
-        except Exception as e:
-            logging.error(f"Error in loop: {e}")
+        print(f"[ℹ️] {new_count} new messages processed.")
 
-        # Exact 10-second cycle
-        await asyncio.sleep(10)
+    except Exception as e:
+        print(f"[ERR] Failed to extract SMS: {e}")
 
-    # (never reached)
-    driver.quit()
-    await bot.session.close()
+# ------------------- Main -------------------
 
-# ----------------------------------------------------------------------
-# Entrypoint
-# ----------------------------------------------------------------------
 if __name__ == "__main__":
-    asyncio.run(monitor_with_refresh())
+    chrome_options = Options()
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument("--disable-software-rasterizer")
+    chrome_options.add_argument("--start-maximized")
+    chrome_options.add_argument("--disable-notifications")
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-logging"])
+    # chrome_options.add_argument("--headless=new")  # optional
+
+    driver = webdriver.Chrome(options=chrome_options)
+    driver.get(config.SMS_URL)
+
+    try:
+        print("[*] SMS Extractor running. Press Ctrl+C to stop.")
+        while True:
+            extract_sms(driver)
+            time.sleep(10)
+    except KeyboardInterrupt:
+        print("\n[🛑] Stopped by user.")
+    finally:
+        driver.quit()
+        print("[*] Browser closed.")
