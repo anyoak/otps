@@ -1,105 +1,155 @@
 import asyncio
 import time
 import html
-from aiogram import Bot, Dispatcher, types
-from aiogram.filters import Command
-from aiogram.enums import ParseMode
-from aiogram.types import Message
+import re
+import logging
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
-import re
+from selenium.webdriver.chrome.service import Service
+from aiogram import Bot
+from aiogram.enums import ParseMode
 
-# ==== CONFIGURATION ====
-BOT_TOKEN = "8335302596:AAFDsN1hRYLvFVawMIrZiJU8o1wpaTBaZIU"      # Replace with your bot token
-GROUP_ID = -1001234567890              # Replace with your Telegram group/channel ID
-LOGIN_URL = "https://www.ivasms.com/login"
-PORTAL_URL = "https://www.ivasms.com/portal"
-MONITOR_URL = "https://www.ivasms.com/portal/sms/test/sms?app=Telegram"
-LOGIN_TIMEOUT = 300                     # seconds
+# ----------------------------------------------------------------------
+# Load config
+# ----------------------------------------------------------------------
+from config import (
+    BOT_TOKEN, GROUP_ID, LOGIN_URL, PORTAL_URL,
+    MONITOR_URL, LOGIN_TIMEOUT
+)
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot=bot)
+# ----------------------------------------------------------------------
+# Global state
+# ----------------------------------------------------------------------
+posted_keys = set()
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(message)s",
+)
 
-# Cache to prevent reposting the same entries
-posted_ranges = set()
-
-# ==== COUNTRY FLAG FUNCTION ====
-def get_flag_emoji(country_code):
+# ----------------------------------------------------------------------
+# Helper: country flag emoji
+# ----------------------------------------------------------------------
+def flag_emoji(country_code: str) -> str:
+    if len(country_code) != 2:
+        return "Globe"
     try:
-        return chr(127397 + ord(country_code[0])) + chr(127397 + ord(country_code[1]))
-    except:
-        return "🌍"  # fallback globe emoji
+        return "".join(chr(0x1F1E6 + ord(c) - ord('A')) for c in country_code.upper())
+    except Exception:
+        return "Globe"
 
-# ==== TELEGRAM MESSAGE STYLE ====
-def format_message(flag, range_name, test_number):
+# ----------------------------------------------------------------------
+# Message builder (HTML)
+# ----------------------------------------------------------------------
+def build_message(flag: str, range_name: str, test_number: str) -> str:
     recv_time = time.strftime("%Y-%m-%d %H:%M:%S")
     return (
-        f"╔═━IVASMS NEW RANGE━━═╗\n"
-        f"┣{flag} RANE: `{html.escape(range_name)}`\n"
-        f"┣🕓 TIMR     ➜ {recv_time}\n"
-        f"┣🌐 SID      ➜ TELEGRAM\n"
-        f"┣☎️ TEST NO. ➜ `{html.escape(test_number)}`\n"
-        f"┣💬 DEV.     ➜ @professor_cry\n"
-        "╚═━━━━ ◢◤◆◥◣ ━━━━═╝"
+        "<b>╔═━IVASMS NEW RANGE━━═╗</b>\n"
+        f"<pre>{flag} RANE: {html.escape(range_name)}</pre>\n"
+        f"<pre>Time     ➜ {recv_time}</pre>\n"
+        "<pre>Source      ➜ TELEGRAM</pre>\n"
+        f"<pre>Test NO. ➜ {html.escape(test_number)}</pre>\n"
+        "<pre>DEV.     ➜ @professor_cry</pre>\n"
+        "<b>╚═━━━━ ◢◤◆◥◣ ━━━━═╝</b>"
     )
 
-# ==== COMMANDS ====
-@dp.message(Command("start"))
-async def start_handler(message: Message):
-    await message.answer("🧭 Monitoring will begin once you log in manually...")
+# ----------------------------------------------------------------------
+# Manual login (once) → keep driver alive
+# ----------------------------------------------------------------------
+def init_driver() -> webdriver.Chrome:
+    opts = Options()
+    opts.add_argument("--start-maximized")
+    opts.add_argument("--disable-blink-features=AutomationControlled")
+    opts.add_argument("--no-sandbox")
+    opts.add_argument("--disable-dev-shm-usage")
+    # keep headless **OFF** – you need to see the page for login
+    # opts.add_argument("--headless=new")
 
-# ==== MAIN MONITORING LOGIC ====
-async def monitor_ranges():
-    chrome_options = Options()
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    chrome_options.add_argument("--start-maximized")
-    # chrome_options.add_argument("--headless=new")  # ❌ comment out for manual login
+    service = Service(executable_path="chromedriver")   # same folder or in PATH
+    driver = webdriver.Chrome(service=service, options=opts)
+    return driver
 
-    driver = webdriver.Chrome(options=chrome_options)
+# ----------------------------------------------------------------------
+# Extract rows from current page source
+# ----------------------------------------------------------------------
+def extract_new_ranges(html_content: str):
+    """
+    Example row in the page:
+        <td>US - New York</td> ... <td>+1234567890</td>
+    The regex is tolerant to extra spaces / HTML tags.
+    """
+    pattern = r'>([A-Z]{2})\s*-\s*([^<]+?)\s*<[^>]*>\s*(\+\d{6,15})'
+    matches = re.findall(pattern, html_content, re.DOTALL)
+
+    new_entries = []
+    for cc, rng, test in matches:
+        rng = rng.strip()
+        test = test.strip()
+        key = f"{cc}-{rng}-{test}"
+        if key not in posted_keys:
+            posted_keys.add(key)
+            new_entries.append((cc, rng, test))
+    return new_entries
+
+# ----------------------------------------------------------------------
+# Main loop – refresh every 10 seconds
+# ----------------------------------------------------------------------
+async def monitor_with_refresh():
+    bot = Bot(token=BOT_TOKEN)
+    driver = init_driver()
+
+    # ---------- 1. Manual login ----------
     driver.get(LOGIN_URL)
-    print("🔑 Please log in manually... Waiting up to 300 seconds.")
+    logging.info("Browser opened – please log in manually.")
+    logging.info(f"Waiting up to {LOGIN_TIMEOUT}s for portal redirect…")
 
-    # Wait for login success
-    start_time = time.time()
-    while time.time() - start_time < LOGIN_TIMEOUT:
-        current_url = driver.current_url
-        if current_url.startswith(PORTAL_URL):
-            print("✅ Login successful!")
+    start = time.time()
+    while time.time() - start < LOGIN_TIMEOUT:
+        if driver.current_url.startswith(PORTAL_URL):
+            logging.info("Login successful!")
             break
-        await asyncio.sleep(3)
+        await asyncio.sleep(2)
     else:
-        print("❌ Login timeout. Please try again.")
+        logging.error("Login timeout – exiting.")
         driver.quit()
         return
 
+    # ---------- 2. Open monitor page ----------
     driver.get(MONITOR_URL)
-    print("📡 Monitoring started...")
+    logging.info("Monitor page loaded – starting 10-second refresh loop…")
 
+    # ---------- 3. Infinite refresh + parse ----------
     while True:
         try:
-            await asyncio.sleep(5)
+            # Refresh page
             driver.refresh()
-            html_content = driver.page_source
+            await asyncio.sleep(1)          # give JS a moment to render
 
-            # Regex to match country code, range name, test number
-            matches = re.findall(r'>([A-Z]{2})\s*-\s*([A-Za-z0-9\s]+).*?(\+\d{6,15})', html_content)
-            for country_code, range_name, test_no in matches:
-                key = f"{country_code}-{range_name}-{test_no}"
-                if key not in posted_ranges:
-                    posted_ranges.add(key)
-                    flag = get_flag_emoji(country_code)
-                    msg = format_message(flag, range_name.strip(), test_no.strip())
-                    await bot.send_message(GROUP_ID, msg, parse_mode=ParseMode.MARKDOWN_V2)
-                    print(f"✅ Posted new range: {key}")
+            html_content = driver.page_source
+            new_ranges = extract_new_ranges(html_content)
+
+            for cc, rng, test in new_ranges:
+                flag = flag_emoji(cc)
+                msg = build_message(flag, rng, test)
+                await bot.send_message(
+                    chat_id=GROUP_ID,
+                    text=msg,
+                    parse_mode=ParseMode.HTML,
+                    disable_web_page_preview=True,
+                )
+                logging.info(f"Posted: {cc} – {rng} – {test}")
 
         except Exception as e:
-            print("⚠️ Error during monitoring:", e)
-            await asyncio.sleep(10)
+            logging.error(f"Error in loop: {e}")
 
-# ==== MAIN ====
-async def main():
-    asyncio.create_task(monitor_ranges())
-    await dp.start_polling(bot)
+        # Exact 10-second cycle
+        await asyncio.sleep(10)
 
+    # (never reached)
+    driver.quit()
+    await bot.session.close()
+
+# ----------------------------------------------------------------------
+# Entrypoint
+# ----------------------------------------------------------------------
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(monitor_with_refresh())
