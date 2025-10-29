@@ -41,18 +41,18 @@ def detect_country(number: str):
 
 def extract_otp(message: str) -> str:
     """Extract OTP code from message with improved pattern matching"""
-    # First try to find WhatsApp-style codes (3 digits - 3 digits)
+    # First try to find WhatsApp-style codes (3 digits - 3 digits) - KEEP ORIGINAL FORMAT
     whatsapp_patterns = [
-        r'\b\d{3}-\d{3}\b',  # 111-111 format
-        r'\b\d{3} \d{3}\b',  # 111 111 format
+        r'\b\d{3}-\d{3}\b',  # 111-111 format - KEEP THE DASH
+        r'\b\d{3} \d{3}\b',  # 111 111 format - KEEP THE SPACE
         r'\b\d{6}\b',        # 111111 format
     ]
     
     for pattern in whatsapp_patterns:
         match = re.search(pattern, message)
         if match:
-            # Remove any non-digit characters for consistent formatting
-            return re.sub(r'\D', '', match.group(0))
+            # RETURN ORIGINAL FORMAT WITHOUT REMOVING ANY CHARACTERS
+            return match.group(0)
     
     # Then try to find other common OTP patterns
     common_patterns = [
@@ -71,7 +71,7 @@ def extract_otp(message: str) -> str:
     return "N/A"
 
 def send_to_telegram(number, country_name, country_flag, service, masked_number, otp_code, message, timestamp):
-    """Send message with updated inline buttons format"""
+    """Send message with updated format as requested"""
     url = f"https://api.telegram.org/bot{config.BOT_TOKEN}/sendMessage"
 
     keyboard = {
@@ -86,12 +86,15 @@ def send_to_telegram(number, country_name, country_flag, service, masked_number,
         ]
     }
 
+    # আপনার চেয়ে মোড়া ফরম্যাট
     formatted = (
-        f"{country_flag} {country_name} – {service.upper()} OTP RECEIVED\n"
-        f"🕒 **Time:** {timestamp.strftime('%Y-%m-%d %H:%M:%S')}\n"
-        f"📞 **Number:** `{masked_number}`\n"
-        f"🔑 **OTP:** `{otp_code}`\n\n"
-        f"💬 **Full Message:**\n"
+        f"🚀 {country_name} {service} Otp Receive\n"
+        f"┣⏰ **Time:** {timestamp.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"┣{country_flag} **Country:** {country_name}\n"
+        f"┣⚙️ **CLI:** `{service}`\n"
+        f"┣☎️ **Number:** `{masked_number}`\n\n"
+        f"🔑 **OTP:** `{otp_code}`\n\n
+        f"┣📩 **Full Message:**\n"
         f"```{message.strip()}```"
     )
 
