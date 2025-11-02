@@ -2,8 +2,8 @@
 LOGIN_URL = "https://www.orangecarrier.com/login"
 CALL_URL = "https://www.orangecarrier.com/live/calls" 
 BASE_URL = "https://www.orangecarrier.com"
-BOT_TOKEN = "your_bot_token"
-CHAT_ID = "your_chat_id"
+BOT_TOKEN = "8522542742:AAHr7nwP7BBTfOLFBLemRhn4bDe5bySoaIc"
+CHAT_ID = "-1002631004312"
 DOWNLOAD_FOLDER = "recordings"
 CHECK_INTERVAL = 5
 MAX_ERRORS = 10
