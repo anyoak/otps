@@ -529,7 +529,7 @@ def extract_calls(driver):
                     country_name, flag = detect_country(did_number)
                     masked = mask_number(did_number)
                     
-                    alert_text = f"📞 **New Call Detected**\n\n📍 **From:** {flag} {masked}\n🌍 **Country:** {country_name}\n⏰ **Time:** {datetime.now().strftime('%Y-%m-%d %I:%M:%S %p')}\n\n🔄 Waiting for call to end..."
+                    alert_text = f"📞 **New Call Detected**\n\n🔗 **From:** {flag} {masked}\n🌍 **Country:** {country_name}\n⏰ **Time:** {datetime.now().strftime('%Y-%m-%d %I:%M:%S %p')}\n\n🔄 Waiting for call to end..."
                     
                     msg_id = send_message(alert_text)
                     active_calls[row_id] = {
@@ -679,7 +679,7 @@ def process_recording_file(call_info, file_path):
         caption = (
             "🔥 **NEW CALL RECEIVED** ✨\n\n"
             f"⏰ **Time:** {call_time}\n"
-            f"🌍 **Country:** {call_info['country']} {call_info['flag']}\n"
+            f"🔗 **Country:** {call_info['country']} {call_info['flag']}\n"
             f"📞 **Number:** {call_info['masked']}\n\n"
             f"🌟 **System:** Privately Secure\n"
             f"🛡️ **Status:** Successfully Recorded"
