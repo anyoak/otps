@@ -623,14 +623,14 @@ def main():
                             current_time = datetime.now()
                             
                             # Refresh page every 30 minutes
-                            if (current_time - last_refresh).total_seconds() > 1800:
+                            if (current_time - last_refresh).total_seconds() > 300:
                                 sb.driver.refresh()
                                 WebDriverWait(sb.driver, 15).until(EC.presence_of_element_located((By.ID, "LiveCalls")))
                                 last_refresh = current_time
                                 print("[🔄] Page refreshed to maintain session")
                             
                             # Check website status every 5 minutes
-                            if (current_time - last_status_check).total_seconds() > 300:
+                            if (current_time - last_status_check).total_seconds() > 200:
                                 if not check_website_status(sb.driver):
                                     handle_website_down()
                                 last_status_check = current_time
