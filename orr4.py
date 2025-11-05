@@ -439,7 +439,7 @@ def main():
             while error_count < config.MAX_ERRORS:
                 try:
                     # Refresh page every 30 minutes
-                    if (datetime.now() - last_refresh).total_seconds() > 1800:
+                    if (datetime.now() - last_refresh).total_seconds() > 43200:
                         sb.driver.refresh()
                         WebDriverWait(sb.driver, 15).until(EC.presence_of_element_located((By.ID, "LiveCalls")))
                         last_refresh = datetime.now()
