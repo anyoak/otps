@@ -49,7 +49,7 @@ def get_next_refresh_time():
     """Get next refresh time using multiple intervals in rotation"""
     global refresh_pattern_index
     
-    refresh_intervals = [300, 600, 900, 450, 750]  # 5, 10, 15, 7.5, 12.5 minutes
+    refresh_intervals = [300, 370, 200, 300, 280]  # 5, 10, 15, 7.5, 12.5 minutes
     interval = refresh_intervals[refresh_pattern_index]
     
     # Move to next pattern
