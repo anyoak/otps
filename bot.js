@@ -112,6 +112,30 @@ function sleep(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+// Escape special characters for Markdown
+function escapeMarkdown(text) {
+    if (!text) return '';
+    return text.toString()
+        .replace(/_/g, '\\_')
+        .replace(/\*/g, '\\*')
+        .replace(/\[/g, '\\[')
+        .replace(/\]/g, '\\]')
+        .replace(/\(/g, '\\(')
+        .replace(/\)/g, '\\)')
+        .replace(/~/g, '\\~')
+        .replace(/`/g, '\\`')
+        .replace(/>/g, '\\>')
+        .replace(/#/g, '\\#')
+        .replace(/\+/g, '\\+')
+        .replace(/-/g, '\\-')
+        .replace(/=/g, '\\=')
+        .replace(/\|/g, '\\|')
+        .replace(/\{/g, '\\{')
+        .replace(/\}/g, '\\}')
+        .replace(/\./g, '\\.')
+        .replace(/!/g, '\\!');
+}
+
 function profileTextFromRow(row) {
     if (!row) {
         return "❌ *No Data Available*\n\nPlease contact administrator.";
@@ -135,20 +159,20 @@ function profileTextFromRow(row) {
 │ 👤 *USER INFORMATION*
 ├──────────────────────────────────
 │ • *ID:* \`${user_id}\`
-│ • *Name:* ${name}
-│ • *Username:* ${username_display}
-│ • *Joined:* ${joined}
-│ • *Country:* ${country}
+│ • *Name:* ${escapeMarkdown(name)}
+│ • *Username:* ${escapeMarkdown(username_display)}
+│ • *Joined:* ${escapeMarkdown(joined)}
+│ • *Country:* ${escapeMarkdown(country)}
 ├──────────────────────────────────
 │ 💰 *FINANCIAL OVERVIEW*
 ├──────────────────────────────────
-│ • *Total IDO:* ${total_ido}
-│ • *Total Investment:* $${total_investment}
-│ • *Total Payout:* $${total_payout}
+│ • *Total IDO:* $${escapeMarkdown(total_ido)}
+│ • *Total Investment:* $${escapeMarkdown(total_investment)}
+│ • *Total Payout:* $${escapeMarkdown(total_payout)}
 ├──────────────────────────────────
 │ 🔗 *WALLET INFORMATION*
 ├──────────────────────────────────
-│ • *EVM Wallet:* \`${evm_wallet}\`
+│ • *EVM Wallet:* \`${escapeMarkdown(evm_wallet)}\`
 └──────────────────────────────────
 
 ✅ *Status:* ${approved ? 'Approved ✅' : 'Pending Review ⏳'}`;
@@ -157,7 +181,6 @@ function profileTextFromRow(row) {
 // ========== PREMIUM ANIMATIONS ==========
 async function sendLoadingSequence(ctx) {
     try {
-        // Phase 1: Initializing System
         let message = await ctx.reply("🔄 *INITIALIZING SYSTEM*", { parse_mode: 'Markdown' });
         
         const loadingFrames = [
@@ -176,7 +199,6 @@ async function sendLoadingSequence(ctx) {
             await sleep(200);
         }
         
-        // Phase 2: Database Verification
         await ctx.telegram.editMessageText(ctx.chat.id, message.message_id, null, "🔍 *VERIFYING DATABASE ACCESS*", { parse_mode: 'Markdown' });
         await sleep(800);
         
@@ -192,7 +214,6 @@ async function sendLoadingSequence(ctx) {
             await sleep(800);
         }
         
-        // Phase 3: Security Check
         await ctx.telegram.editMessageText(ctx.chat.id, message.message_id, null, "🛡️ *SECURITY SCAN IN PROGRESS*", { parse_mode: 'Markdown' });
         await sleep(800);
         
@@ -210,7 +231,6 @@ async function sendLoadingSequence(ctx) {
         
         await ctx.deleteMessage(message.message_id);
         
-        // Final Access Denied Message
         const finalText = `❌ *MEMBERSHIP STATUS: PENDING*
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
@@ -244,7 +264,7 @@ async function sendSuccessAnimation(ctx, userName) {
         let message = await ctx.reply("🎉 *WELCOME ABOARD!*", { parse_mode: 'Markdown' });
         
         const welcomeFrames = [
-            `✨ *Welcome, ${userName}!* ✨\n\nInitializing your account...`,
+            `✨ *Welcome, ${escapeMarkdown(userName)}!* ✨\n\nInitializing your account...`,
             `🚀 *System Access Granted* 🚀\n\nLoading dashboard...`,
             `✅ *Membership Verified* ✅\n\nFinalizing setup...`,
             `🎯 *Profile Activated* 🎯\n\nYou're all set!`
@@ -312,9 +332,9 @@ bot.start(async (ctx) => {
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-👋 Hello *${user.first_name}*!
+👋 Hello *${escapeMarkdown(user.first_name)}*!
 
-Thank you for joining our exclusive community. We're implementing advanced security measures to protect our members.
+Thank you for joining our exclusive community.
 
 🔒 *Security Level:* Enterprise Grade
 🎯 *Platform:* AI-Powered Investment  
@@ -333,7 +353,6 @@ Please complete the security verification below to continue.`;
         return;
     }
 
-    // Captcha Challenge
     const { question, answer } = generateMathCaptcha();
     captchaStore.set(user.id, answer);
     
@@ -341,7 +360,7 @@ Please complete the security verification below to continue.`;
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-To ensure you're human, please solve this simple math problem:
+To ensure you're human, please solve this math problem:
 
 *${question}*
 
@@ -384,17 +403,17 @@ Now accessing our member database to verify your status...
         
         await sendLoadingSequence(ctx);
         
-        // Enhanced Admin Notification
+        // FIXED: Admin notification with escaped characters
         const user = ctx.from;
         const adminText = `👤 *NEW MEMBER REQUEST*
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
 🆔 *User ID:* \`${user.id}\`
-📛 *Name:* ${user.first_name} ${user.last_name || ''}
-📧 *Username:* @${user.username || 'N/A'}
-🌐 *Language:* ${user.language_code || 'N/A'}
-🕒 *Request Time:* ${new Date().toUTCString()}
+📛 *Name:* ${escapeMarkdown(user.first_name + (user.last_name ? ` ${user.last_name}` : ''))}
+📧 *Username:* @${escapeMarkdown(user.username || 'N/A')}
+🌐 *Language:* ${escapeMarkdown(user.language_code || 'N/A')}
+🕒 *Request Time:* ${escapeMarkdown(new Date().toUTCString())}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -546,8 +565,8 @@ This command requires administrator privileges.
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
 🆔 *User ID:* \`${targetId}\`
-📛 *Name:* ${row.name}
-📧 *Username:* @${row.username || 'N/A'}
+📛 *Name:* ${escapeMarkdown(row.name)}
+📧 *Username:* @${escapeMarkdown(row.username || 'N/A')}
 ✅ *Approved:* ${row.approved ? 'Yes ✅' : 'No ❌'}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
