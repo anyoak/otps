@@ -1,4 +1,4 @@
-const { Telegraf, Markup, session } = require('telegraf');
+const { Telegraf, Markup } = require('telegraf');
 const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 
@@ -6,14 +6,12 @@ const path = require('path');
 const BOT_TOKEN = "8443659336:AAF5Yh1HrBd_bkXCuht4CVrWnFluIK8Bx0o";
 const ADMIN_ID = 6083895678;
 const DB_PATH = path.join(__dirname, 'bot_users.db');
-const DEFAULT_COUNTRY_FLAG = "🇧🇩 Bangladesh (BD)";
 // ============================
 
 const bot = new Telegraf(BOT_TOKEN);
 
 // ========== DB INIT ==========
 const db = new sqlite3.Database(DB_PATH);
-
 db.serialize(() => {
     db.run(`
         CREATE TABLE IF NOT EXISTS users (
@@ -49,7 +47,7 @@ function addOrUpdateUser(user) {
         
         db.run(
             `INSERT OR IGNORE INTO users (user_id, username, name, joined_date, country) VALUES (?, ?, ?, ?, ?)`,
-            [user.id, username, name, joined, DEFAULT_COUNTRY_FLAG],
+            [user.id, username, name, joined, "🇧🇩 Bangladesh (BD)"],
             function(err) {
                 if (err) reject(err);
                 else {
@@ -110,9 +108,13 @@ function getUserStats() {
     });
 }
 
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 function profileTextFromRow(row) {
     if (!row) {
-        return "❌ *No Data Available*\\n\\nPlease contact administrator\\.";
+        return "❌ *No Data Available*\n\nPlease contact administrator.";
     }
     
     const user_id = row.user_id;
@@ -127,31 +129,164 @@ function profileTextFromRow(row) {
     const evm_wallet = row.evm_wallet || 'Not Set';
     const username_display = username ? `@${username}` : "Not Set";
     
-    return `
-🎯 *PROFILE DETAILS*
+    return `🎯 *PROFILE DETAILS*
 
 ┌──────────────────────────────────
-│ 👤 **USER INFORMATION**
+│ 👤 *USER INFORMATION*
 ├──────────────────────────────────
-│ • **ID:** \`${user_id}\`
-│ • **Name:** ${name}
-│ • **Username:** ${username_display}
-│ • **Joined:** ${joined}
-│ • **Country:** ${country}
+│ • *ID:* \`${user_id}\`
+│ • *Name:* ${name}
+│ • *Username:* ${username_display}
+│ • *Joined:* ${joined}
+│ • *Country:* ${country}
 ├──────────────────────────────────
-│ 💰 **FINANCIAL OVERVIEW**
+│ 💰 *FINANCIAL OVERVIEW*
 ├──────────────────────────────────
-│ • **Total IDO:** ${total_ido}
-│ • **Total Investment:** $${total_investment}
-│ • **Total Payout:** $${total_payout}
+│ • *Total IDO:* ${total_ido}
+│ • *Total Investment:* $${total_investment}
+│ • *Total Payout:* $${total_payout}
 ├──────────────────────────────────
-│ 🔗 **WALLET INFORMATION**
+│ 🔗 *WALLET INFORMATION*
 ├──────────────────────────────────
-│ • **EVM Wallet:** \`${evm_wallet}\`
+│ • *EVM Wallet:* \`${evm_wallet}\`
 └──────────────────────────────────
 
-✅ *Status:* ${approved ? 'Approved ✅' : 'Pending Review ⏳'}
-`;
+✅ *Status:* ${approved ? 'Approved ✅' : 'Pending Review ⏳'}`;
+}
+
+// ========== PREMIUM ANIMATIONS ==========
+async function sendLoadingSequence(ctx) {
+    try {
+        // Phase 1: Initializing System
+        let message = await ctx.reply("🔄 *INITIALIZING SYSTEM*", { parse_mode: 'Markdown' });
+        
+        const loadingFrames = [
+            "🔄 *INITIALIZING SYSTEM*\n\n▰▱▱▱▱▱▱▱ 10%",
+            "🔄 *INITIALIZING SYSTEM*\n\n▰▰▱▱▱▱▱▱ 20%", 
+            "🔄 *INITIALIZING SYSTEM*\n\n▰▰▰▱▱▱▱▱ 30%",
+            "🔄 *INITIALIZING SYSTEM*\n\n▰▰▰▰▱▱▱▱ 40%",
+            "🔄 *INITIALIZING SYSTEM*\n\n▰▰▰▰▰▱▱▱ 50%",
+            "🔄 *INITIALIZING SYSTEM*\n\n▰▰▰▰▰▰▱▱ 60%",
+            "🔄 *INITIALIZING SYSTEM*\n\n▰▰▰▰▰▰▰▱ 70%",
+            "🔄 *INITIALIZING SYSTEM*\n\n▰▰▰▰▰▰▰▰ 80%"
+        ];
+        
+        for (let frame of loadingFrames) {
+            await ctx.telegram.editMessageText(ctx.chat.id, message.message_id, null, frame, { parse_mode: 'Markdown' });
+            await sleep(200);
+        }
+        
+        // Phase 2: Database Verification
+        await ctx.telegram.editMessageText(ctx.chat.id, message.message_id, null, "🔍 *VERIFYING DATABASE ACCESS*", { parse_mode: 'Markdown' });
+        await sleep(800);
+        
+        const verificationSteps = [
+            "🔍 *VERIFYING DATABASE ACCESS*\n\n🔐 Connecting to secure database...",
+            "🔍 *VERIFYING DATABASE ACCESS*\n\n🔐 Authentication in progress...", 
+            "🔍 *VERIFYING DATABASE ACCESS*\n\n🔐 Scanning user records...",
+            "🔍 *VERIFYING DATABASE ACCESS*\n\n🔐 Cross-referencing official lists..."
+        ];
+        
+        for (let step of verificationSteps) {
+            await ctx.telegram.editMessageText(ctx.chat.id, message.message_id, null, step, { parse_mode: 'Markdown' });
+            await sleep(800);
+        }
+        
+        // Phase 3: Security Check
+        await ctx.telegram.editMessageText(ctx.chat.id, message.message_id, null, "🛡️ *SECURITY SCAN IN PROGRESS*", { parse_mode: 'Markdown' });
+        await sleep(800);
+        
+        const securityFrames = [
+            "🛡️ *SECURITY SCAN IN PROGRESS*\n\n🛡️ Scanning user credentials...",
+            "🛡️ *SECURITY SCAN IN PROGRESS*\n\n🛡️ Verifying access permissions...",
+            "🛡️ *SECURITY SCAN IN PROGRESS*\n\n🛡️ Checking approval status...",
+            "🛡️ *SECURITY SCAN IN PROGRESS*\n\n⚠️ *ACCESS RESTRICTED DETECTED*"
+        ];
+        
+        for (let frame of securityFrames) {
+            await ctx.telegram.editMessageText(ctx.chat.id, message.message_id, null, frame, { parse_mode: 'Markdown' });
+            await sleep(1000);
+        }
+        
+        await ctx.deleteMessage(message.message_id);
+        
+        // Final Access Denied Message
+        const finalText = `❌ *MEMBERSHIP STATUS: PENDING*
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+🔒 *ACCESS RESTRICTED*
+
+You are currently not in our official members database. Your account requires administrator approval.
+
+⏰ *Processing Time:* 24-48 hours
+
+📋 *Next Steps:*
+1. Wait for administrator review
+2. You'll receive notification upon approval  
+3. Once approved, full access will be granted
+
+💡 *Note:* This process ensures community security and authenticity.
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+🛡️ *Secured by Advanced Verification System*`;
+        
+        await ctx.reply(finalText, { parse_mode: 'Markdown' });
+
+    } catch (error) {
+        console.error("Animation error:", error);
+    }
+}
+
+async function sendSuccessAnimation(ctx, userName) {
+    try {
+        let message = await ctx.reply("🎉 *WELCOME ABOARD!*", { parse_mode: 'Markdown' });
+        
+        const welcomeFrames = [
+            `✨ *Welcome, ${userName}!* ✨\n\nInitializing your account...`,
+            `🚀 *System Access Granted* 🚀\n\nLoading dashboard...`,
+            `✅ *Membership Verified* ✅\n\nFinalizing setup...`,
+            `🎯 *Profile Activated* 🎯\n\nYou're all set!`
+        ];
+        
+        for (let frame of welcomeFrames) {
+            await ctx.telegram.editMessageText(ctx.chat.id, message.message_id, null, frame, { parse_mode: 'Markdown' });
+            await sleep(1000);
+        }
+        
+        await ctx.deleteMessage(message.message_id);
+        
+    } catch (error) {
+        console.error("Success animation error:", error);
+    }
+}
+
+async function sendProfileLoading(ctx) {
+    try {
+        let message = await ctx.reply("🔄 *LOADING PROFILE DATA*", { parse_mode: 'Markdown' });
+        
+        const frames = [
+            "🔄 *LOADING PROFILE DATA*\n\n▰▱▱▱▱▱▱▱",
+            "🔄 *LOADING PROFILE DATA*\n\n▰▰▱▱▱▱▱▱",
+            "🔄 *LOADING PROFILE DATA*\n\n▰▰▰▱▱▱▱▱",
+            "🔄 *LOADING PROFILE DATA*\n\n▰▰▰▰▱▱▱▱",
+            "🔄 *LOADING PROFILE DATA*\n\n▰▰▰▰▰▱▱▱",
+            "🔄 *LOADING PROFILE DATA*\n\n▰▰▰▰▰▰▱▱",
+            "🔄 *LOADING PROFILE DATA*\n\n▰▰▰▰▰▰▰▱",
+            "🔄 *LOADING PROFILE DATA*\n\n▰▰▰▰▰▰▰▰"
+        ];
+        
+        for (let frame of frames) {
+            await ctx.telegram.editMessageText(ctx.chat.id, message.message_id, null, frame, { parse_mode: 'Markdown' });
+            await sleep(150);
+        }
+        
+        await ctx.deleteMessage(message.message_id);
+        
+    } catch (error) {
+        console.error("Profile loading error:", error);
+    }
 }
 
 // ========== CAPTCHA SYSTEM ==========
@@ -161,144 +296,9 @@ function generateMathCaptcha() {
     const a = Math.floor(Math.random() * 41) + 10;
     const b = Math.floor(Math.random() * 26) + 5;
     const op = Math.random() > 0.5 ? '+' : '-';
-    let ans;
-    if (op === '+') {
-        ans = a + b;
-    } else {
-        ans = a - b;
-    }
-    const question = `**${a} ${op} ${b}** = ?`;
+    const ans = op === '+' ? a + b : a - b;
+    const question = `${a} ${op} ${b} = ?`;
     return { question, answer: ans.toString() };
-}
-
-// ========== ANIMATION FUNCTIONS ==========
-async function sendLoadingSequence(ctx) {
-    try {
-        // Phase 1: Data Fetching Animation
-        let msg1 = await ctx.reply("🔄 *INITIALIZING SYSTEM*", { parse_mode: 'Markdown' });
-        
-        const loadingFrames = ["▰▱▱▱▱▱▱▱", "▰▰▱▱▱▱▱▱", "▰▰▰▱▱▱▱▱", "▰▰▰▰▱▱▱▱", 
-                             "▰▰▰▰▰▱▱▱", "▰▰▰▰▰▰▱▱", "▰▰▰▰▰▰▰▱", "▰▰▰▰▰▰▰▰"];
-        
-        for (let frame of loadingFrames) {
-            await ctx.telegram.editMessageText(
-                ctx.chat.id,
-                msg1.message_id,
-                null,
-                `🔄 *FETCHING USER DATA*\\n\\n${frame} 25%`,
-                { parse_mode: 'Markdown' }
-            );
-            await sleep(300);
-        }
-        
-        await ctx.telegram.editMessageText(
-            ctx.chat.id,
-            msg1.message_id,
-            null,
-            "✅ *DATA RETRIEVAL COMPLETE*",
-            { parse_mode: 'Markdown' }
-        );
-        await sleep(1000);
-        await ctx.telegram.deleteMessage(ctx.chat.id, msg1.message_id);
-
-        // Phase 2: Database Verification
-        let msg2 = await ctx.reply("🔍 *VERIFYING DATABASE ACCESS*", { parse_mode: 'Markdown' });
-        
-        const verificationSteps = [
-            "🔐 Connecting to secure database...",
-            "🔐 Authentication in progress...",
-            "🔐 Scanning user records...",
-            "🔐 Cross-referencing official lists..."
-        ];
-        
-        for (let step of verificationSteps) {
-            await ctx.telegram.editMessageText(
-                ctx.chat.id,
-                msg2.message_id,
-                null,
-                step
-            );
-            await sleep(1000);
-        }
-        
-        // Phase 3: Security Check
-        let msg3 = await ctx.reply("🛡️ *SECURITY SCAN IN PROGRESS*", { parse_mode: 'Markdown' });
-        
-        const securityFrames = [
-            "🛡️ Scanning user credentials...",
-            "🛡️ Verifying access permissions...",
-            "🛡️ Checking approval status...",
-            "⚠️  **ACCESS RESTRICTED DETECTED**"
-        ];
-        
-        for (let frame of securityFrames) {
-            await ctx.telegram.editMessageText(
-                ctx.chat.id,
-                msg3.message_id,
-                null,
-                frame
-            );
-            await sleep(1500);
-        }
-        
-        await ctx.telegram.deleteMessage(ctx.chat.id, msg3.message_id);
-
-        // Final Message
-        const finalText = `
-❌ *MEMBERSHIP STATUS: PENDING*
-
-━━━━━━━━━━━━━━━━━━━━━━━━
-
-🔒 *ACCESS RESTRICTED*
-
-You are currently not in our official members database\\. Your account requires administrator approval\\.
-
-⏰ *Processing Time:* 24\\-48 hours
-
-📋 *Next Steps:*
-1\\. Wait for administrator review
-2\\. You'll receive notification upon approval
-3\\. Once approved, full access will be granted
-
-💡 *Note:* This process ensures community security and authenticity\\.
-
-━━━━━━━━━━━━━━━━━━━━━━━━
-
-🛡️ *Secured by Advanced Verification System*
-`;
-        await ctx.reply(finalText, { parse_mode: 'MarkdownV2' });
-
-    } catch (error) {
-        console.error("Error in loading sequence:", error);
-    }
-}
-
-async function sendSuccessAnimation(ctx, userName) {
-    let successMsg = await ctx.reply("🎉 *WELCOME ABOARD\\!*", { parse_mode: 'MarkdownV2' });
-    
-    const welcomeFrames = [
-        `✨ **Welcome, ${userName}\\!** ✨`,
-        `🚀 **System Access Granted** 🚀`, 
-        `✅ **Membership Verified** ✅`,
-        `🎯 **Profile Activated** 🎯`
-    ];
-    
-    for (let frame of welcomeFrames) {
-        await ctx.telegram.editMessageText(
-            ctx.chat.id,
-            successMsg.message_id,
-            null,
-            frame,
-            { parse_mode: 'MarkdownV2' }
-        );
-        await sleep(1000);
-    }
-    
-    await ctx.telegram.deleteMessage(ctx.chat.id, successMsg.message_id);
-}
-
-function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 // ========== BOT COMMANDS ==========
@@ -308,24 +308,23 @@ bot.start(async (ctx) => {
     const row = await getUser(user.id);
     const approved = row && row.approved === 1;
     
-    const welcomeText = `
-🤖 *WELCOME TO SYMBIOTIC AI BOT* 
+    const welcomeText = `🤖 *WELCOME TO SYMBIOTIC AI BOT* 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-👋 Hello *${user.first_name}*\\!
+👋 Hello *${user.first_name}*!
 
-Thank you for joining our exclusive community\\. We're implementing advanced security measures to protect our members\\.
+Thank you for joining our exclusive community. We're implementing advanced security measures to protect our members.
 
-🔒 *Security Level:* **Enterprise Grade**
-🎯 *Platform:* **AI\\-Powered Investment**
-🌟 *Community:* **Verified Members Only**
+🔒 *Security Level:* Enterprise Grade
+🎯 *Platform:* AI-Powered Investment  
+🌟 *Community:* Verified Members Only
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-Please complete the security verification below to continue\\.
-`;
-    await ctx.reply(welcomeText, { parse_mode: 'MarkdownV2' });
+Please complete the security verification below to continue.`;
+    
+    await ctx.reply(welcomeText, { parse_mode: 'Markdown' });
     
     if (approved) {
         await sendSuccessAnimation(ctx, user.first_name);
@@ -338,24 +337,23 @@ Please complete the security verification below to continue\\.
     const { question, answer } = generateMathCaptcha();
     captchaStore.set(user.id, answer);
     
-    const captchaText = `
-🧮 *SECURITY VERIFICATION*
+    const captchaText = `🧮 *SECURITY VERIFICATION*
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
 To ensure you're human, please solve this simple math problem:
 
-${question}
+*${question}*
 
 📝 *Instructions:*
 • Type only the numerical answer
-• You have 3 attempts
+• You have 3 attempts  
 • Use /start to restart if needed
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-🔐 This helps us prevent automated access\\.
-`;
+🔐 This helps us prevent automated access.`;
+    
     await ctx.reply(captchaText, { parse_mode: 'Markdown' });
 });
 
@@ -370,42 +368,41 @@ bot.on('text', async (ctx) => {
     
     if (userAnswer === expected) {
         captchaStore.delete(userId);
-        const successText = `
-✅ *VERIFICATION SUCCESSFUL*
+        
+        const successText = `✅ *VERIFICATION SUCCESSFUL*
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-🎉 Excellent\\! You've passed the security check\\.
+🎉 Excellent! You've passed the security check.
 
-Now accessing our member database to verify your status\\.\\.\\.
+Now accessing our member database to verify your status...
 
-🛡️ *Security Status:* **Verified Human**
-`;
-        await ctx.reply(successText, { parse_mode: 'MarkdownV2' });
+🛡️ *Security Status:* Verified Human`;
+        
+        await ctx.reply(successText, { parse_mode: 'Markdown' });
         await sleep(2000);
         
         await sendLoadingSequence(ctx);
         
-        // Notify Admin
+        // Enhanced Admin Notification
         const user = ctx.from;
-        const adminText = `
-👤 *NEW MEMBER REQUEST*
+        const adminText = `👤 *NEW MEMBER REQUEST*
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-🆔 **User ID:** \`${user.id}\`
-📛 **Name:** ${user.first_name} ${user.last_name || ''}
-📧 **Username:** @${user.username || 'N/A'}
-🌐 **Language:** ${user.language_code || 'N/A'}
-🕒 **Request Time:** ${new Date().toUTCString()}
+🆔 *User ID:* \`${user.id}\`
+📛 *Name:* ${user.first_name} ${user.last_name || ''}
+📧 *Username:* @${user.username || 'N/A'}
+🌐 *Language:* ${user.language_code || 'N/A'}
+🕒 *Request Time:* ${new Date().toUTCString()}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
 *Security Check:* ✅ Passed
 *Captcha Score:* 🎯 Excellent
 
-Please review and approve/reject this membership request\\.
-`;
+Please review and approve/reject this membership request.`;
+        
         const keyboard = Markup.inlineKeyboard([
             [
                 Markup.button.callback("✅ Approve Member", `approve_user_${user.id}`),
@@ -416,18 +413,16 @@ Please review and approve/reject this membership request\\.
         
         await ctx.telegram.sendMessage(ADMIN_ID, adminText, {
             parse_mode: 'Markdown',
-            ...keyboard
+            reply_markup: keyboard
         });
     } else {
-        await ctx.reply(`
-❌ *VERIFICATION FAILED*
+        await ctx.reply(`❌ *VERIFICATION FAILED*
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-Incorrect answer\\. Please try again or type /start for a new security challenge\\.
+Incorrect answer. Please try again or type /start for a new security challenge.
 
-💡 *Tip:* Double\\-check your calculation and enter only the numerical result\\.
-`, { parse_mode: 'MarkdownV2' });
+💡 *Tip:* Double-check your calculation and enter only the numerical result.`, { parse_mode: 'Markdown' });
     }
 });
 
@@ -441,9 +436,7 @@ bot.command('profile', async (ctx) => {
         return;
     }
     
-    const loadingMsg = await ctx.reply("🔄 Loading your profile...");
-    await sleep(1500);
-    await ctx.deleteMessage(loadingMsg.message_id);
+    await sendProfileLoading(ctx);
     
     const profileText = profileTextFromRow(row);
     
@@ -457,60 +450,56 @@ bot.command('profile', async (ctx) => {
     
     await ctx.reply(profileText, {
         parse_mode: 'Markdown',
-        ...keyboard
+        reply_markup: keyboard
     });
 });
 
 // Help command
 bot.command('help', async (ctx) => {
-    const helpText = `
-🎯 *SYMBIOTIC AI BOT \\- HELP GUIDE*
+    const helpText = `🎯 *SYMBIOTIC AI BOT - HELP GUIDE*
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-🤖 **Available Commands:**
+🤖 *Available Commands:*
 
-• /start \\- Initialize bot & verification
-• /profile \\- View your member profile  
-• /help \\- Show this help message
+• /start - Initialize bot & verification
+• /profile - View your member profile  
+• /help - Show this help message
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-🛡️ **Security Features:**
+🛡️ *Security Features:*
 • Advanced captcha verification
 • Administrator approval system
-• Real\\-time monitoring
+• Real-time monitoring
 • Secure data handling
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-💡 **Need Assistance?**
+💡 *Need Assistance?*
 Contact: @Symbioticl
 
-🔒 *Your security and privacy are our top priorities\\.*
-`;
-    await ctx.reply(helpText, { parse_mode: 'MarkdownV2' });
+🔒 *Your security and privacy are our top priorities.*`;
+    
+    await ctx.reply(helpText, { parse_mode: 'Markdown' });
 });
 
 // ========== ADMIN COMMANDS ==========
 bot.command('set', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) {
-        await ctx.reply(`
-🔒 *ACCESS DENIED*
+        await ctx.reply(`🔒 *ACCESS DENIED*
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-This command requires administrator privileges\\.
+This command requires administrator privileges.
 
-🛡️ *Security Notice:* Unauthorized access attempts are logged\\.
-`, { parse_mode: 'MarkdownV2' });
+🛡️ *Security Notice:* Unauthorized access attempts are logged.`, { parse_mode: 'Markdown' });
         return;
     }
     
     const parts = ctx.message.text.split(' ');
     if (parts.length < 2) {
-        const usageText = `
-🎯 *ADMIN TOOL: USER MANAGEMENT*
+        const usageText = `🎯 *ADMIN TOOL: USER MANAGEMENT*
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -518,13 +507,13 @@ This command requires administrator privileges\\.
 
 📋 *Example:* \`/set 123456789\`
 
-🔍 *Description:* Modify user profile fields and financial data\\.
+🔍 *Description:* Modify user profile fields and financial data.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-💡 Use /users to see registered user IDs
-`;
-        await ctx.reply(usageText, { parse_mode: 'MarkdownV2' });
+💡 Use /users to see registered user IDs`;
+        
+        await ctx.reply(usageText, { parse_mode: 'Markdown' });
         return;
     }
     
@@ -552,23 +541,22 @@ This command requires administrator privileges\\.
         [Markup.button.callback("👑 Approval", `setfield_${targetId}_approved`)]
     ]);
     
-    const userInfo = `
-👤 *USER MANAGEMENT PANEL*
+    const userInfo = `👤 *USER MANAGEMENT PANEL*
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-🆔 **User ID:** \`${targetId}\`
-📛 **Name:** ${row.name}
-📧 **Username:** @${row.username || 'N/A'}
-✅ **Approved:** ${row.approved ? 'Yes ✅' : 'No ❌'}
+🆔 *User ID:* \`${targetId}\`
+📛 *Name:* ${row.name}
+📧 *Username:* @${row.username || 'N/A'}
+✅ *Approved:* ${row.approved ? 'Yes ✅' : 'No ❌'}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-Select field to modify:
-`;
+Select field to modify:`;
+    
     await ctx.reply(userInfo, {
         parse_mode: 'Markdown',
-        ...keyboard
+        reply_markup: keyboard
     });
 });
 
@@ -576,33 +564,34 @@ bot.command('users', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     
     const stats = await getUserStats();
-    const statsText = `
-📊 *SYSTEM STATISTICS*
+    const approvalRate = ((stats.approved / stats.total) * 100).toFixed(1);
+    
+    const statsText = `📊 *SYSTEM STATISTICS*
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-👥 **User Analytics:**
+👥 *User Analytics:*
 • 👤 Total Users: \`${stats.total}\`
 • ✅ Approved: \`${stats.approved}\`
 • ⏳ Pending: \`${stats.pending}\`
 
-📈 **Platform Metrics:**
-• 🎯 Approval Rate: \`${((stats.approved / stats.total) * 100).toFixed(1)}%\\`
+📈 *Platform Metrics:*
+• 🎯 Approval Rate: \`${approvalRate}%\`
 • 🔄 Growth: Monitoring
 • 🛡️ Security: Active
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
 💡 *Admin Tools:*
-• /set \\- Manage users
-• /broadcast \\- Send announcements
-• /stats \\- Detailed analytics
-`;
-    await ctx.reply(statsText, { parse_mode: 'MarkdownV2' });
+• /set - Manage users
+• /broadcast - Send announcements
+• /stats - Detailed analytics`;
+    
+    await ctx.reply(statsText, { parse_mode: 'Markdown' });
 });
 
 // Broadcast system
-const broadcastState = new Map();
+let broadcastState = false;
 
 bot.command('broadcast', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) {
@@ -610,12 +599,11 @@ bot.command('broadcast', async (ctx) => {
         return;
     }
     
-    const broadcastInfo = `
-📢 *BROADCAST MANAGEMENT*
+    const broadcastInfo = `📢 *BROADCAST MANAGEMENT*
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-Send the message you want to broadcast to all approved members\\.
+Send the message you want to broadcast to all approved members.
 
 📋 *Supported Formats:*
 • Text messages
@@ -625,22 +613,22 @@ Send the message you want to broadcast to all approved members\\.
 • Audio files
 
 🎯 *Target:* All approved members
-📊 *Delivery:* Real\\-time with analytics
+📊 *Delivery:* Real-time with analytics
 
-💡 *Pro Tip:* Include engaging content and clear call\\-to\\-action\\!
+💡 *Pro Tip:* Include engaging content and clear call-to-action!
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-Please send your broadcast content now\\.\\.\\.
-`;
-    await ctx.reply(broadcastInfo, { parse_mode: 'MarkdownV2' });
-    broadcastState.set(ctx.from.id, true);
+Please send your broadcast content now...`;
+    
+    await ctx.reply(broadcastInfo, { parse_mode: 'Markdown' });
+    broadcastState = true;
 });
 
 bot.on('message', async (ctx) => {
-    if (!broadcastState.get(ctx.from.id) || ctx.from.id !== ADMIN_ID) return;
+    if (!broadcastState || ctx.from.id !== ADMIN_ID) return;
     
-    broadcastState.delete(ctx.from.id);
+    broadcastState = false;
     
     const processingMsg = await ctx.reply("🚀 *Starting broadcast process...*", { parse_mode: 'Markdown' });
     
@@ -662,31 +650,19 @@ bot.on('message', async (ctx) => {
             if (ctx.message.text) {
                 await ctx.telegram.sendMessage(uid, ctx.message.text, {
                     parse_mode: 'Markdown',
-                    ...contactKeyboard
+                    reply_markup: contactKeyboard.reply_markup
                 });
             } else if (ctx.message.photo) {
                 await ctx.telegram.sendPhoto(uid, ctx.message.photo[ctx.message.photo.length - 1].file_id, {
                     caption: ctx.message.caption || "",
                     parse_mode: 'Markdown',
-                    ...contactKeyboard
+                    reply_markup: contactKeyboard.reply_markup
                 });
             } else if (ctx.message.video) {
                 await ctx.telegram.sendVideo(uid, ctx.message.video.file_id, {
                     caption: ctx.message.caption || "",
                     parse_mode: 'Markdown',
-                    ...contactKeyboard
-                });
-            } else if (ctx.message.document) {
-                await ctx.telegram.sendDocument(uid, ctx.message.document.file_id, {
-                    caption: ctx.message.caption || "",
-                    parse_mode: 'Markdown',
-                    ...contactKeyboard
-                });
-            } else if (ctx.message.audio) {
-                await ctx.telegram.sendAudio(uid, ctx.message.audio.file_id, {
-                    caption: ctx.message.caption || "",
-                    parse_mode: 'Markdown',
-                    ...contactKeyboard
+                    reply_markup: contactKeyboard.reply_markup
                 });
             } else {
                 await ctx.forwardMessage(uid);
@@ -699,7 +675,7 @@ bot.on('message', async (ctx) => {
                     ctx.chat.id,
                     progressMsg.message_id,
                     null,
-                    `📊 *Broadcast Progress:* ${i + 1}/${totalUsers}\\n✅ Success: ${success} | ❌ Failed: ${failed}`,
+                    `📊 *Broadcast Progress:* ${i + 1}/${totalUsers}\n✅ Success: ${success} | ❌ Failed: ${failed}`,
                     { parse_mode: 'Markdown' }
                 );
             }
@@ -711,29 +687,27 @@ bot.on('message', async (ctx) => {
         }
     }
     
-    const reportText = `
-📢 *BROADCAST COMPLETED*
+    const reportText = `📢 *BROADCAST COMPLETED*
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-📊 **Delivery Report:**
+📊 *Delivery Report:*
 • ✅ Successful: ${success}
 • ❌ Failed: ${failed} 
 • 📈 Success Rate: ${((success / totalUsers) * 100).toFixed(1)}%
 
-🎯 **Target Audience:** Approved Members
-🕒 **Completion Time:** ${new Date().toLocaleTimeString()}
+🎯 *Target Audience:* Approved Members
+🕒 *Completion Time:* ${new Date().toLocaleTimeString()}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
 📋 *Next Steps:*
 • Monitor engagement metrics
 • Respond to member inquiries
-• Plan follow\\-up communications
-`;
+• Plan follow-up communications`;
     
     await ctx.deleteMessage(progressMsg.message_id);
-    await ctx.reply(reportText, { parse_mode: 'MarkdownV2' });
+    await ctx.reply(reportText, { parse_mode: 'Markdown' });
 });
 
 // ========== CALLBACK HANDLERS ==========
@@ -747,24 +721,23 @@ bot.action(/approve_user_(\d+)/, async (ctx) => {
     await setUserField(targetId, "approved", "1");
     
     try {
-        const approvalText = `
-🎉 *MEMBERSHIP APPROVED\\!*
+        const approvalText = `🎉 *MEMBERSHIP APPROVED!*
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-✅ **Congratulations\\!** Your membership has been approved by our administration team\\.
+✅ *Congratulations!* Your membership has been approved by our administration team.
 
 🚀 *What's Next:*
 • Full access to platform features
-• Real\\-time announcements  
+• Real-time announcements  
 • Investment opportunities
 • Community privileges
 
 📊 Use /profile to view your complete dashboard
 
-💬 Need help\\? Contact: @Symbioticl
-`;
-        await ctx.telegram.sendMessage(targetId, approvalText, { parse_mode: 'MarkdownV2' });
+💬 Need help? Contact: @Symbioticl`;
+        
+        await ctx.telegram.sendMessage(targetId, approvalText, { parse_mode: 'Markdown' });
         await sendSuccessAnimation({ ...ctx, chat: { id: targetId } }, "Member");
     } catch (error) {
         console.error("Failed to notify user:", error);
@@ -772,8 +745,8 @@ bot.action(/approve_user_(\d+)/, async (ctx) => {
     
     await ctx.answerCbQuery("✅ Member approved successfully!");
     await ctx.editMessageText(
-        `✅ *APPROVED*\\n\\nUser \`${targetId}\` has been granted full membership access\\.`,
-        { parse_mode: 'MarkdownV2' }
+        `✅ *APPROVED*\n\nUser \`${targetId}\` has been granted full membership access.`,
+        { parse_mode: 'Markdown' }
     );
 });
 
@@ -787,31 +760,30 @@ bot.action(/reject_user_(\d+)/, async (ctx) => {
     await setUserField(targetId, "approved", "0");
     
     try {
-        const rejectionText = `
-❌ *MEMBERSHIP DECLINED*
+        const rejectionText = `❌ *MEMBERSHIP DECLINED*
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-We regret to inform you that your membership request has been declined\\.
+We regret to inform you that your membership request has been declined.
 
 📋 *Possible Reasons:*
 • Incomplete profile information
 • Security concerns
 • Platform capacity limits
 
-💡 *Note:* You may reapply after 30 days or contact support for clarification\\.
+💡 *Note:* You may reapply after 30 days or contact support for clarification.
 
-💬 Support: @Symbioticl
-`;
-        await ctx.telegram.sendMessage(targetId, rejectionText, { parse_mode: 'MarkdownV2' });
+💬 Support: @Symbioticl`;
+        
+        await ctx.telegram.sendMessage(targetId, rejectionText, { parse_mode: 'Markdown' });
     } catch (error) {
         console.error("Failed to notify user:", error);
     }
     
     await ctx.answerCbQuery("❌ Membership request rejected");
     await ctx.editMessageText(
-        `❌ *REJECTED*\\n\\nUser \`${targetId}\` membership request has been declined\\.`,
-        { parse_mode: 'MarkdownV2' }
+        `❌ *REJECTED*\n\nUser \`${targetId}\` membership request has been declined.`,
+        { parse_mode: 'Markdown' }
     );
 });
 
@@ -830,18 +802,17 @@ bot.action('refresh_profile', async (ctx) => {
     
     await ctx.editMessageText(profileText, {
         parse_mode: 'Markdown',
-        ...keyboard
+        reply_markup: keyboard
     });
     await ctx.answerCbQuery("✅ Profile refreshed!");
 });
 
 bot.action('view_stats', async (ctx) => {
-    const statsText = `
-📊 *PERSONAL STATISTICS*
+    const statsText = `📊 *PERSONAL STATISTICS*
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-🎯 **Coming Soon:**
+🎯 *Coming Soon:*
 • Investment portfolio
 • ROI analytics  
 • Performance metrics
@@ -849,21 +820,23 @@ bot.action('view_stats', async (ctx) => {
 
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
-🚀 *Premium features are under development and will be available soon\\!*
+🚀 *Premium features are under development and will be available soon!*
 
-💡 Stay tuned for updates\\!
-`;
+💡 Stay tuned for updates!`;
+    
     await ctx.answerCbQuery();
-    await ctx.reply(statsText, { parse_mode: 'MarkdownV2' });
+    await ctx.reply(statsText, { parse_mode: 'Markdown' });
 });
 
 // ========== START BOT ==========
-console.log("🚀 Symbiotic AI Bot Started Successfully!");
+console.log("🚀 Symbiotic AI Bot Starting...");
 console.log("📊 Database Initialized");
 console.log("🛡️ Security Systems Active");
 
 bot.launch().then(() => {
-    console.log('🤖 Bot is running...');
+    console.log('🤖 Bot is running successfully!');
+}).catch(err => {
+    console.error('❌ Error starting bot:', err);
 });
 
 // Enable graceful stop
