@@ -10,8 +10,5 @@
   "dependencies": {
     "telegraf": "^4.16.3",
     "sqlite3": "^5.1.6"
-  },
-  "devDependencies": {
-    "nodemon": "^3.0.1"
   }
 }
