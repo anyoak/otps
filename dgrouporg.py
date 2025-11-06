@@ -524,14 +524,14 @@ def extract_sms():
 
                 # Format the message for Telegram (new style)
                 formatted = (
-                    f"{country_flag} {country_name} {source_name} OTP Code Received! 🎉\n"
-                    f"━━━━━━━━━━━━━━\n\n"
-                    f"⏳ Time: {date}\n"
-                    f"{country_flag} Country: {country_name}\n"
-                    f"⚙️ Source: {source_name}\n"
-                    f"📞 Number: `{masked_number}`\n\n"
-                    f"🔐 OTP: `{otp_code}`\n\n"
-                    f"━━━━━━━━━━━━━━\n"
+                    f"**{country_flag} {country_name} {source_name} OTP Code Received!** 🎉\n"
+                    f"**━━━━━━━━━━━━━━━━**\n\n"
+                    f"⏳ **Time:** {date}\n"
+                    f"{country_flag} **Country:** {country_name}\n"
+                    f"⚙️ **Source:** {source_name}\n"
+                    f"📞 **Number:** `{masked_number}`\n\n"
+                    f"🔐 **OTP:** `{otp_code}`\n\n"
+                    f"**━━━━━━━━━━━━━━━━**\n"
                     f"💬 Full Message:\n"
                     f"```{message}```"
                 )
