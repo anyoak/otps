@@ -23,7 +23,7 @@ MIN_DELAY = 1
 MAX_DELAY = 5
 
 # Refresh Pattern (multiple intervals in seconds)
-REFRESH_PATTERN = [300, 600, 900, 450, 750]  # 5, 10, 15, 7.5, 12.5 minutes
+REFRESH_PATTERN = [300, 370, 200, 450, 250]  # 5, 10, 15, 7.5, 12.5 minutes
 
 # Advanced Settings
 MAX_REFRESH_RETRIES = 2
