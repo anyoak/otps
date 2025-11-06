@@ -39,6 +39,24 @@ function getUser(userId) {
     });
 }
 
+function getAllUsers() {
+    return new Promise((resolve, reject) => {
+        db.all("SELECT * FROM users ORDER BY joined_date DESC", (err, rows) => {
+            if (err) reject(err);
+            else resolve(rows);
+        });
+    });
+}
+
+function getPendingUsers() {
+    return new Promise((resolve, reject) => {
+        db.all("SELECT * FROM users WHERE approved = 0 ORDER BY joined_date DESC", (err, rows) => {
+            if (err) reject(err);
+            else resolve(rows);
+        });
+    });
+}
+
 function addOrUpdateUser(user) {
     return new Promise((resolve, reject) => {
         const username = user.username || "";
@@ -166,7 +184,7 @@ function profileTextFromRow(row) {
 ├──────────────────────────────────
 │ 💰 *FINANCIAL OVERVIEW*
 ├──────────────────────────────────
-│ • *Total IDO:* $${escapeMarkdown(total_ido)}
+│ • *Total IDO:* ${escapeMarkdown(total_ido)}
 │ • *Total Investment:* $${escapeMarkdown(total_investment)}
 │ • *Total Payout:* $${escapeMarkdown(total_payout)}
 ├──────────────────────────────────
@@ -321,6 +339,9 @@ function generateMathCaptcha() {
     return { question, answer: ans.toString() };
 }
 
+// ========== BROADCAST STATE ==========
+let broadcastState = new Map();
+
 // ========== BOT COMMANDS ==========
 bot.start(async (ctx) => {
     const user = ctx.from;
@@ -381,7 +402,13 @@ bot.on('text', async (ctx) => {
     const userId = ctx.from.id;
     const expected = captchaStore.get(userId);
     
-    if (!expected) return;
+    if (!expected) {
+        // Check if this is a broadcast message from admin
+        if (broadcastState.get(ctx.from.id) && ctx.from.id === ADMIN_ID) {
+            await handleBroadcastContent(ctx);
+        }
+        return;
+    }
     
     const userAnswer = ctx.message.text.trim();
     
@@ -504,6 +531,95 @@ Contact: @Symbioticl
 });
 
 // ========== ADMIN COMMANDS ==========
+
+// Admin panel command
+bot.command('admin', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) {
+        await ctx.reply("🔒 Administrator access required.");
+        return;
+    }
+    
+    const stats = await getUserStats();
+    
+    const adminText = `👑 *ADMIN PANEL*
+
+━━━━━━━━━━━━━━━━━━━━━━━━
+
+📊 *System Statistics:*
+• Total Users: ${stats.total}
+• Approved: ${stats.approved}
+• Pending: ${stats.pending}
+
+🛠️ *Admin Tools:*
+• /users - View all users
+• /pending - View pending approvals  
+• /broadcast - Send message to all users
+• /set [user_id] - Modify user data
+• /stats - Detailed statistics`;
+    
+    await ctx.reply(adminText, { parse_mode: 'Markdown' });
+});
+
+// View all users command
+bot.command('users', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    
+    const users = await getAllUsers();
+    
+    if (users.length === 0) {
+        await ctx.reply("❌ No users found in database.");
+        return;
+    }
+    
+    let userList = `📋 *ALL USERS (${users.length})*
+
+━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    
+    users.slice(0, 20).forEach((user, index) => {
+        userList += `${index + 1}. ${user.name} (@${user.username || 'N/A'}) - ${user.approved ? '✅' : '⏳'}\nID: ${user.user_id}\n━━━━━━━━━━━━━━━━━━━━━━━━\n`;
+    });
+    
+    if (users.length > 20) {
+        userList += `\n... and ${users.length - 20} more users.`;
+    }
+    
+    await ctx.reply(userList, { parse_mode: 'Markdown' });
+});
+
+// View pending users command
+bot.command('pending', async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) return;
+    
+    const pendingUsers = await getPendingUsers();
+    
+    if (pendingUsers.length === 0) {
+        await ctx.reply("✅ No pending users. All users are approved!");
+        return;
+    }
+    
+    let pendingList = `⏳ *PENDING APPROVALS (${pendingUsers.length})*
+
+━━━━━━━━━━━━━━━━━━━━━━━━\n\n`;
+    
+    pendingUsers.forEach((user, index) => {
+        pendingList += `${index + 1}. ${user.name} (@${user.username || 'N/A'})\nID: \`${user.user_id}\`\nJoined: ${user.joined_date}\n`;
+        
+        const keyboard = Markup.inlineKeyboard([
+            [
+                Markup.button.callback("✅ Approve", `approve_user_${user.user_id}`),
+                Markup.button.callback("❌ Reject", `reject_user_${user.user_id}`)
+            ]
+        ]);
+        
+        ctx.reply(pendingList, { 
+            parse_mode: 'Markdown',
+            reply_markup: keyboard 
+        });
+        
+        pendingList = ''; // Reset for next user
+    });
+});
+
 bot.command('set', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) {
         await ctx.reply(`🔒 *ACCESS DENIED*
@@ -557,7 +673,7 @@ This command requires administrator privileges.
             Markup.button.callback("🎯 Payout", `setfield_${targetId}_total_payout`),
             Markup.button.callback("🔗 EVM Wallet", `setfield_${targetId}_evm_wallet`)
         ],
-        [Markup.button.callback("👑 Approval", `setfield_${targetId}_approved`)]
+        [Markup.button.callback("👑 Approval Status", `setfield_${targetId}_approved`)]
     ]);
     
     const userInfo = `👤 *USER MANAGEMENT PANEL*
@@ -579,7 +695,7 @@ Select field to modify:`;
     });
 });
 
-bot.command('users', async (ctx) => {
+bot.command('stats', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) return;
     
     const stats = await getUserStats();
@@ -602,16 +718,16 @@ bot.command('users', async (ctx) => {
 ━━━━━━━━━━━━━━━━━━━━━━━━
 
 💡 *Admin Tools:*
-• /set - Manage users
+• /admin - Admin panel
+• /users - View all users
+• /pending - Pending approvals
 • /broadcast - Send announcements
-• /stats - Detailed analytics`;
+• /set - Manage user data`;
     
     await ctx.reply(statsText, { parse_mode: 'Markdown' });
 });
 
 // Broadcast system
-let broadcastState = false;
-
 bot.command('broadcast', async (ctx) => {
     if (ctx.from.id !== ADMIN_ID) {
         await ctx.reply("🔒 Administrator access required.");
@@ -641,13 +757,16 @@ Send the message you want to broadcast to all approved members.
 Please send your broadcast content now...`;
     
     await ctx.reply(broadcastInfo, { parse_mode: 'Markdown' });
-    broadcastState = true;
+    broadcastState.set(ctx.from.id, true);
 });
 
-bot.on('message', async (ctx) => {
-    if (!broadcastState || ctx.from.id !== ADMIN_ID) return;
+async function handleBroadcastContent(ctx) {
+    if (ctx.from.id !== ADMIN_ID) {
+        broadcastState.delete(ctx.from.id);
+        return;
+    }
     
-    broadcastState = false;
+    broadcastState.delete(ctx.from.id);
     
     const processingMsg = await ctx.reply("🚀 *Starting broadcast process...*", { parse_mode: 'Markdown' });
     
@@ -683,13 +802,25 @@ bot.on('message', async (ctx) => {
                     parse_mode: 'Markdown',
                     reply_markup: contactKeyboard.reply_markup
                 });
+            } else if (ctx.message.document) {
+                await ctx.telegram.sendDocument(uid, ctx.message.document.file_id, {
+                    caption: ctx.message.caption || "",
+                    parse_mode: 'Markdown',
+                    reply_markup: contactKeyboard.reply_markup
+                });
+            } else if (ctx.message.audio) {
+                await ctx.telegram.sendAudio(uid, ctx.message.audio.file_id, {
+                    caption: ctx.message.caption || "",
+                    parse_mode: 'Markdown',
+                    reply_markup: contactKeyboard.reply_markup
+                });
             } else {
                 await ctx.forwardMessage(uid);
             }
             
             success++;
             
-            if (i % 10 === 0) {
+            if (i % 10 === 0 || i === userIds.length - 1) {
                 await ctx.telegram.editMessageText(
                     ctx.chat.id,
                     progressMsg.message_id,
@@ -726,8 +857,9 @@ bot.on('message', async (ctx) => {
 • Plan follow-up communications`;
     
     await ctx.deleteMessage(progressMsg.message_id);
+    await ctx.deleteMessage(processingMsg.message_id);
     await ctx.reply(reportText, { parse_mode: 'Markdown' });
-});
+}
 
 // ========== CALLBACK HANDLERS ==========
 bot.action(/approve_user_(\d+)/, async (ctx) => {
@@ -806,6 +938,52 @@ We regret to inform you that your membership request has been declined.
     );
 });
 
+// Set field handlers
+bot.action(/setfield_(\d+)_(.+)/, async (ctx) => {
+    if (ctx.from.id !== ADMIN_ID) {
+        await ctx.answerCbQuery("Access denied");
+        return;
+    }
+    
+    const targetId = parseInt(ctx.match[1]);
+    const field = ctx.match[2];
+    
+    // Store the field we're setting
+    ctx.session = ctx.session || {};
+    ctx.session.setField = { targetId, field };
+    
+    let fieldName = '';
+    switch(field) {
+        case 'total_ido': fieldName = 'Total IDO'; break;
+        case 'total_investment': fieldName = 'Total Investment'; break;
+        case 'total_payout': fieldName = 'Total Payout'; break;
+        case 'evm_wallet': fieldName = 'EVM Wallet'; break;
+        case 'approved': fieldName = 'Approval Status'; break;
+    }
+    
+    await ctx.reply(`Please enter the new value for *${fieldName}* for user ${targetId}:`, { 
+        parse_mode: 'Markdown' 
+    });
+    
+    await ctx.answerCbQuery();
+});
+
+// Handle set field values
+bot.on('text', async (ctx) => {
+    // Check if we're in set field mode
+    if (ctx.session && ctx.session.setField && ctx.from.id === ADMIN_ID) {
+        const { targetId, field } = ctx.session.setField;
+        const value = ctx.message.text;
+        
+        await setUserField(targetId, field, value);
+        
+        delete ctx.session.setField;
+        
+        await ctx.reply(`✅ Successfully updated user ${targetId}'s ${field} to: ${value}`);
+        return;
+    }
+});
+
 bot.action('refresh_profile', async (ctx) => {
     const userId = ctx.from.id;
     const row = await getUser(userId);
@@ -851,6 +1029,12 @@ bot.action('view_stats', async (ctx) => {
 console.log("🚀 Symbiotic AI Bot Starting...");
 console.log("📊 Database Initialized");
 console.log("🛡️ Security Systems Active");
+
+// Add session support for admin commands
+bot.use((ctx, next) => {
+    ctx.session = ctx.session || {};
+    return next();
+});
 
 bot.launch().then(() => {
     console.log('🤖 Bot is running successfully!');
