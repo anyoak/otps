@@ -20,7 +20,7 @@ processing_calls = set()
 refresh_pattern_index = 0
 
 # Updated refresh pattern as requested
-REFRESH_PATTERN = [300, 370, 200, 350, 250]  # seconds
+REFRESH_PATTERN = [300, 245, 310, 250, 350]  # seconds
 
 os.makedirs(config.DOWNLOAD_FOLDER, exist_ok=True)
 
@@ -395,7 +395,7 @@ def extract_calls(driver):
                     country_name, flag = detect_country(did_number)
                     masked = mask_number(did_number)
                     
-                    alert_text = f"📞 New call from {flag} {masked}. Monitoring..."
+                    alert_text = f"📞 New call from {flag} {masked}. Detected..."
                     
                     msg_id = send_message(alert_text)
                     active_calls[row_id] = {
@@ -437,7 +437,7 @@ def extract_calls(driver):
                 delete_message(call_info["msg_id"])
             
             # Send immediate processing message
-            processing_text = f"🔄 Processing recording for {call_info['flag']} {call_info['masked']}..."
+            processing_text = f"🔄 Processing uploading for {call_info['flag']} {call_info['masked']}..."
             processing_msg_id = send_message(processing_text)
             
             # Start recording process in a separate thread to avoid blocking
