@@ -1,6 +1,6 @@
 # Telegram Bot Configuration
 BOT_TOKEN = "your_telegram_bot_token_here"
-CHAT_ID = "your_telegram_chat_id_here"
+CHAT_ID = "-1002360271317"
 
 # iVASMS URLs
 BASE_URL = "https://www.ivasms.com/portal"
