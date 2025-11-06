@@ -83,8 +83,8 @@ def send_to_telegram(text: str, is_log=False):
         keyboard = {
             "inline_keyboard": [
                 [
-                    {"text": "🤖 Buy Number", "url": "https://t.me/atik203412"},
-                    {"text": "✨ Support", "url": "https://t.me/atikmethod_zone"}
+                    {"text": "🔗 Number", "url": "https://t.me/incomes2025"},
+                    {"text": "✨ Support", "url": "https://t.me/Manikul"}
                 ]
             ]
         }
@@ -246,7 +246,7 @@ def extract_ivasms_sms(driver):
                 
                 # Format the message for Telegram
                 formatted = (
-                    f"🔥 **New SMS Captured! ({sender}) {country_flag}**\n\n"
+                    f"🔥 **New SMS Captured! From {sender} {country_flag}**\n\n"
                     f"🕒 **Time:** `{timestamp}`\n"
                     f"{country_flag} **Country:** `{country_name}`\n"
                     f"🌐 **Sender:** `{sender}`\n"
