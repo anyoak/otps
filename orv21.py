@@ -1,6 +1,6 @@
 # Telegram Configuration
-BOT_TOKEN = "7744467305:AAElMd8DRrtvDcHq9HQvtMTs3G8pO51lsRM"
-CHAT_ID = "-1002360271317"
+BOT_TOKEN = "8522542742:AAHr7nwP7BBTfOLFBLemRhn4bDe5bySoaIc"
+CHAT_ID = "-1002631004312"
 
 # Website URLs
 LOGIN_URL = "https://www.orangecarrier.com/login"
