@@ -11,7 +11,7 @@ BASE_URL = "https://www.orangecarrier.com"
 DOWNLOAD_FOLDER = "recordings"
 
 # Monitoring Settings
-CHECK_INTERVAL = 3  # seconds between checks
+CHECK_INTERVAL = 5  # seconds between checks
 MAX_ERRORS = 10  # maximum consecutive errors before stopping
 
 # CAPTCHA Settings
