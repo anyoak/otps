@@ -27,7 +27,7 @@ monitoring_active = True
 executor = ThreadPoolExecutor(max_workers=5)
 
 # Refresh pattern in seconds
-REFRESH_PATTERN = [300, 245, 310, 250, 350]
+REFRESH_PATTERN = [350, 405, 380, 750, 550]
 
 os.makedirs(config.DOWNLOAD_FOLDER, exist_ok=True)
 
