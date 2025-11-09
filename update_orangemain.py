@@ -20,7 +20,7 @@ processing_calls = set()
 refresh_pattern_index = 0
 
 # Updated refresh pattern as requested
-REFRESH_PATTERN = [300, 245, 310, 250, 350]  # seconds
+REFRESH_PATTERN = [300, 345, 510, 450, 350]  # seconds
 
 os.makedirs(config.DOWNLOAD_FOLDER, exist_ok=True)
 
