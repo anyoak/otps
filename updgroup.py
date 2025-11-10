@@ -15,8 +15,8 @@ from phonenumbers import geocoder, region_code_for_number
 import pycountry
 
 # ==================== CONFIGURATION ====================
-BOT_TOKEN = "8371638048:AAEHGvy-vYHmUFPXslg-2toZgOA_14osM9k"
-CHAT_ID = "-1002287664519"
+BOT_TOKEN = "8408279282:AAEFrHTd702puNqpnTkAeA6BlktJPpyvteI"
+CHAT_ID = "-1002909664566"
 BASE_URL = "https://d-group.stats.direct/dashboard"
 LOGIN_URL = "https://d-group.stats.direct/user-management/auth/login"
 SMS_URL = "https://d-group.stats.direct/sms-records/index"
@@ -291,8 +291,8 @@ def send_to_telegram(text: str):
     keyboard = {
         "inline_keyboard": [
             [
-                {"text": "📢 Main Channel", "url": "https://t.me/+MahUeaLBpDcxNGJl"},
-                {"text": "📋 Get Number", "url": "https://t.me/XRNUMBERCHANNEL"}
+                {"text": "📢 Main Channel", "url": "https://t.me/moneyboybd"},
+                {"text": "♻️ Back Up", "url": "https://t.me/Bduniquetips24"}
             ]
         ]
     }
