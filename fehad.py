@@ -287,24 +287,24 @@ def detect_country(number: str):
 def send_to_telegram(text: str):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     
-    # Simple inline keyboard (buttons one below another)
-keyboard = {
-    "inline_keyboard": [
-        [
-            {"text": "☎️ Available Numbers", "url": "https://t.me/XrTeamNamber"}
-        ],
-        [
-            {"text": "⚡ Owner", "url": "https://t.me/XR9TG"}
+    # Fixed: Proper indentation for keyboard
+    keyboard = {
+        "inline_keyboard": [
+            [
+                {"text": "☎️ Available Numbers", "url": "https://t.me/XrTeamNamber"}
+            ],
+            [
+                {"text": "⚡ Owner", "url": "https://t.me/XR9TG"}
+            ]
         ]
-    ]
-}
+    }
 
-payload = {
-    "chat_id": CHAT_ID,
-    "text": text,
-    "parse_mode": "Markdown",
-    "reply_markup": keyboard,
-}
+    payload = {
+        "chat_id": CHAT_ID,
+        "text": text,
+        "parse_mode": "Markdown",
+        "reply_markup": keyboard,
+    }
     
     try:
         res = requests.post(url, json=payload, timeout=10)
