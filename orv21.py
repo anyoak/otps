@@ -1,5 +1,5 @@
 # Telegram Configuration
-BOT_TOKEN = "8522542742:AAHr7nwP7BBTfOLFBLemRhn4bDe5bySoaIc"
+BOT_TOKEN = "8275403009:AAGBLmoieNeqOMrb9HQQ6oy4Akg0a4UC_LE"
 CHAT_ID = "-1002631004312"
 
 # Website URLs
@@ -11,7 +11,7 @@ BASE_URL = "https://www.orangecarrier.com"
 DOWNLOAD_FOLDER = "recordings"
 
 # Monitoring Settings
-CHECK_INTERVAL = 5  # seconds between checks
+CHECK_INTERVAL = 4  # seconds between checks
 MAX_ERRORS = 10  # maximum consecutive errors before stopping
 
 # CAPTCHA Settings
