@@ -462,8 +462,8 @@ def send_recording_failed_message(call_info):
     did_url = f"https://www.orangecarrier.com/live/calls/sound?did={call_info['did_number']}"
     
     failure_text = (
-        f"❌ Recording failed for {call_info['flag']} {call_info['masked']}!\n"
-        f"URL - Please visit to access the original version.\n"
+        f"⛔ Recording failed for {call_info['flag']} {call_info['masked']}!\n\n"
+        f"🔗 Please visit to access the original version.\n"
         f"{did_url}"
     )
     
