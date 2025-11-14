@@ -680,7 +680,7 @@ def send_successful_recording(call_info, file_path):
             f"⏰ Time: {call_time}\n"
             f"{call_info['flag']} Country: {call_info['country']}\n"
             f"📞 Number: {call_info['masked']}\n\n"
-            "If you face any issues with the voice, you can click the link below to listen to the original version. Please make sure that you're logged into your account in the browser you're using.\n\n"
+            "```If you face any issues with the voice, you can click the link below to listen to the original version. Please make sure that you're logged into your account in the browser you're using.```\n\n"
             f'🔗 <a href="{full_url}">Tap here to access the original file</a>\n\n'
             f"🌟 Configure by @professor_cry"
         )
