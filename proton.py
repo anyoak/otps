@@ -17,9 +17,9 @@ import pycountry
 # ==================== CONFIGURATION ====================
 BOT_TOKEN = "8371638048:AAEHGvy-vYHmUFPXslg-2toZgOA_14osM9k"
 CHAT_ID = "-1002287664519"
-BASE_URL = "https://proton-sms-panel.com/"
-LOGIN_URL = "https://proton-sms-panel.com/user-management/auth/login"
-SMS_URL = "https://proton-sms-panel.com/SMSCDRReports"
+BASE_URL = "http://109.236.84.81/ints/agent/SMSDashboard"
+LOGIN_URL = "http://109.236.84.81/ints/login"
+SMS_URL = "http://109.236.84.81/ints/agent/SMSCDRStats"
 REFRESH_INTERVAL = 5
 MAX_MESSAGES_STORE = 2000
 SCROLL_ATTEMPTS = 3
