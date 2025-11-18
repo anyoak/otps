@@ -2,25 +2,22 @@ import asyncio
 import time
 import re
 import logging
-import random
 import aiosqlite
 import requests
 from seleniumbase import Driver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, WebDriverException
+from selenium.common.exceptions import TimeoutException
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command, CommandObject
 import phonenumbers
-from phonenumbers import geocoder, timezone
+from phonenumbers import geocoder
 import pycountry
 
-# ----------------------------------------------------------------------
 # Configuration
-# ----------------------------------------------------------------------
 BOT_TOKEN = "8335302596:AAFDsN1hRYLvFVawMIrZiJU8o1wpaTBaZIU"
 ADMIN_ID = 6577308099
 
@@ -30,9 +27,7 @@ MONITOR_URL = "https://www.ivasms.com/portal/sms/test/sms?app=Telegram"
 LOGIN_TIMEOUT = 600
 REFRESH_INTERVAL = 60
 
-# ----------------------------------------------------------------------
 # Global state
-# ----------------------------------------------------------------------
 posted_keys = set()
 driver = None
 bot = None
@@ -45,9 +40,7 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S"
 )
 
-# ----------------------------------------------------------------------
-# Database Setup
-# ----------------------------------------------------------------------
+# Database Functions
 async def init_database():
     async with aiosqlite.connect("groups.db") as db:
         await db.execute('''
@@ -96,29 +89,18 @@ async def get_all_groups():
         logging.error(f"❌ Error getting groups from database: {e}")
         return []
 
-# ----------------------------------------------------------------------
 # Country Flag Detection
-# ----------------------------------------------------------------------
 def get_country_flag(phone_number: str) -> str:
     try:
         parsed_number = phonenumbers.parse(phone_number, None)
         country_code = phonenumbers.region_code_for_number(parsed_number)
-        
         if country_code:
             country = pycountry.countries.get(alpha_2=country_code)
             if country:
                 return country_code_to_flag(country.alpha_2)
-        
-        country_name = geocoder.description_for_number(parsed_number, "en")
-        if country_name:
-            country = pycountry.countries.get(name=country_name)
-            if country:
-                return country_code_to_flag(country.alpha_2)
-                
-    except Exception as e:
-        logging.warning(f"Could not detect country for {phone_number}: {e}")
-    
-    return "🌍"
+        return "🌍"
+    except:
+        return "🌍"
 
 def country_code_to_flag(country_code: str) -> str:
     if len(country_code) != 2:
@@ -127,12 +109,9 @@ def country_code_to_flag(country_code: str) -> str:
     flag_emoji = chr(base + ord(country_code[0]) - ord('A')) + chr(base + ord(country_code[1]) - ord('A'))
     return flag_emoji
 
-# ----------------------------------------------------------------------
-# Message builder
-# ----------------------------------------------------------------------
+# Message Builder
 def build_message(range_name: str, test_number: str, receive_time: str) -> str:
     country_flag = get_country_flag(test_number)
-    
     return (
         f"💬 Latest Range Information Logged 🪝\n\n"
         f"Name: `{range_name}`\n"
@@ -154,372 +133,70 @@ def create_keyboard():
         ]
     )
 
-# ----------------------------------------------------------------------
 # Admin Check Function
-# ----------------------------------------------------------------------
 def is_admin(user_id: int):
     return user_id == ADMIN_ID
 
-# ----------------------------------------------------------------------
-# Enhanced Driver Initialization with Better Navigation
-# ----------------------------------------------------------------------
-def init_driver():
-    global driver
-    try:
-        if driver:
-            try:
-                driver.quit()
-            except:
-                pass
-        
-        logging.info("🔄 Initializing browser driver...")
-        
-        driver = Driver(
-            uc=True,
-            headless=False,
-            undetectable=True,
-            incognito=True,
-        )
-        
-        driver.set_page_load_timeout(45)
-        driver.implicitly_wait(15)
-        
-        logging.info("✅ Driver initialized successfully")
-        return driver
-        
-    except Exception as e:
-        logging.error(f"❌ Failed to initialize driver: {e}")
-        return None
+# =============================================================================
+# COMPLETE BOT COMMANDS - ALL INCLUDED
+# =============================================================================
 
-# ----------------------------------------------------------------------
-# SMART NAVIGATION SYSTEM - FIXED
-# ----------------------------------------------------------------------
-def smart_navigate_to_url(target_url, max_retries=5):
-    """Smart navigation with multiple fallback methods"""
-    for attempt in range(max_retries):
-        try:
-            logging.info(f"🧭 Navigation attempt {attempt + 1}/{max_retries} to: {target_url}")
-            
-            # Clear cookies and cache for fresh start
-            if attempt > 0:
-                try:
-                    driver.delete_all_cookies()
-                    logging.info("🧹 Cookies cleared")
-                except:
-                    pass
-            
-            # Method 1: Direct navigation
-            driver.get(target_url)
-            
-            # Wait for page to load completely
-            WebDriverWait(driver, 25).until(
-                lambda d: d.execute_script("return document.readyState") == "complete"
-            )
-            
-            # Wait additional time for dynamic content
-            time.sleep(5)
-            
-            current_url = driver.current_url
-            logging.info(f"📍 Current URL: {current_url}")
-            
-            # Check if we reached the target URL
-            if target_url in current_url or "sms/test/sms" in current_url:
-                logging.info("🎯 Successfully navigated to target URL")
-                return True
-            else:
-                logging.warning(f"⚠️ Not on target URL. Current: {current_url}")
-                
-                # If we're on portal page but not the specific monitor page
-                if "portal" in current_url and "sms/test/sms" not in current_url:
-                    logging.info("🔍 On portal page, trying to navigate directly to monitor URL")
-                    # Try Method 2: JavaScript navigation
-                    try:
-                        driver.execute_script(f"window.location.href = '{MONITOR_URL}';")
-                        time.sleep(5)
-                        
-                        current_url = driver.current_url
-                        if "sms/test/sms" in current_url:
-                            logging.info("✅ JavaScript navigation successful")
-                            return True
-                    except Exception as js_e:
-                        logging.warning(f"JavaScript navigation failed: {js_e}")
-                
-                # Method 3: Try finding and clicking the SMS test link
-                if attempt >= 2:  # Try this method after 2 failed attempts
-                    if click_sms_test_link():
-                        logging.info("✅ Clicked SMS test link successfully")
-                        return True
-            
-            if attempt < max_retries - 1:
-                wait_time = (attempt + 1) * 5
-                logging.info(f"⏳ Waiting {wait_time} seconds before retry...")
-                time.sleep(wait_time)
-                
-        except TimeoutException:
-            logging.warning(f"⏰ Page load timeout on attempt {attempt + 1}")
-            if attempt < max_retries - 1:
-                continue
-            else:
-                logging.error("❌ All navigation attempts timed out")
-                return False
-        except Exception as e:
-            logging.error(f"❌ Navigation error on attempt {attempt + 1}: {e}")
-            if attempt < max_retries - 1:
-                time.sleep(5)
-            else:
-                return False
-    
-    return False
-
-def click_sms_test_link():
-    """Try to find and click the SMS test link in the portal"""
-    try:
-        logging.info("🔍 Looking for SMS test link in portal...")
-        
-        # Common selectors for SMS test links
-        link_selectors = [
-            "a[href*='sms/test']",
-            "a[href*='sms?app=Telegram']",
-            "a:contains('SMS')",
-            "a:contains('Test')",
-            "a:contains('sms')",
-            "//a[contains(text(), 'SMS')]",
-            "//a[contains(text(), 'Test')]",
-            "//a[contains(@href, 'sms/test')]"
-        ]
-        
-        for selector in link_selectors:
-            try:
-                if selector.startswith("//"):
-                    elements = driver.find_elements(By.XPATH, selector)
-                else:
-                    elements = driver.find_elements(By.CSS_SELECTOR, selector)
-                
-                for element in elements:
-                    try:
-                        href = element.get_attribute("href")
-                        if href and "sms" in href.lower():
-                            logging.info(f"🔗 Found SMS link: {href}")
-                            element.click()
-                            time.sleep(5)
-                            
-                            # Check if navigation was successful
-                            if "sms/test/sms" in driver.current_url:
-                                logging.info("✅ Successfully clicked SMS test link")
-                                return True
-                    except:
-                        continue
-            except:
-                continue
-        
-        logging.warning("❌ Could not find SMS test link")
-        return False
-        
-    except Exception as e:
-        logging.error(f"Error clicking SMS test link: {e}")
-        return False
-
-def wait_for_monitor_page(timeout=30):
-    """Wait for monitor page to load completely"""
-    try:
-        logging.info("🕒 Waiting for monitor page to load...")
-        
-        # Wait for page to be ready
-        WebDriverWait(driver, timeout).until(
-            lambda d: d.execute_script("return document.readyState") == "complete"
-        )
-        
-        # Wait for table to be present (indicating monitor page is loaded)
-        WebDriverWait(driver, timeout).until(
-            EC.presence_of_element_located((By.TAG_NAME, "table"))
-        )
-        
-        # Additional wait for any dynamic content
-        time.sleep(3)
-        
-        logging.info("✅ Monitor page loaded successfully")
-        return True
-        
-    except TimeoutException:
-        logging.error("❌ Timeout waiting for monitor page")
-        return False
-    except Exception as e:
-        logging.error(f"❌ Error waiting for monitor page: {e}")
-        return False
-
-# ----------------------------------------------------------------------
-# Login Management
-# ----------------------------------------------------------------------
-def wait_for_manual_login(timeout=LOGIN_TIMEOUT):
-    """Wait for user to manually complete login"""
-    logging.info("🔑 Please complete login manually in the browser...")
-    logging.info("💡 After login, you should be redirected to the portal page")
-    
-    start_time = time.time()
-    last_status = time.time()
-    
-    while time.time() - start_time < timeout:
-        try:
-            current_url = driver.current_url
-            
-            # Check if we're logged in (on portal page or dashboard)
-            if is_logged_in():
-                logging.info("✅ Login successful! Detected portal/dashboard page")
-                return True
-            
-            # Show status every 30 seconds
-            if time.time() - last_status > 30:
-                elapsed = time.time() - start_time
-                remaining = timeout - elapsed
-                logging.info(f"⏳ Waiting for login... {int(remaining)}s remaining")
-                logging.info(f"📍 Current URL: {current_url}")
-                last_status = time.time()
-            
-            time.sleep(5)
-            
-        except Exception as e:
-            logging.error(f"Error during login wait: {e}")
-            time.sleep(10)
-    
-    logging.error("❌ Login timeout reached!")
-    return False
-
-def is_logged_in():
-    """Check if we're properly logged in"""
-    try:
-        current_url = driver.current_url
-        page_source = driver.page_source.lower()
-        
-        # Check if we're on portal page or dashboard
-        if "portal" in current_url.lower():
-            return True
-            
-        # Check for logged-in indicators
-        logged_in_indicators = [
-            "logout", "log out", "sign out", "dashboard", 
-            "welcome", "portal", "sms", "test"
-        ]
-        
-        for indicator in logged_in_indicators:
-            if indicator in page_source:
-                return True
-        
-        # Check for navigation menu or user profile
-        user_indicators = [
-            "nav", "menu", "profile", "user", "account"
-        ]
-        for indicator in user_indicators:
-            if f'"{indicator}"' in page_source or f"'{indicator}'" in page_source:
-                return True
-                
-        return False
-        
-    except Exception as e:
-        logging.error(f"Error checking login status: {e}")
-        return False
-
-# ----------------------------------------------------------------------
-# Enhanced Range Extraction
-# ----------------------------------------------------------------------
-def extract_new_ranges(html_content: str):
-    """Extract range information from HTML"""
-    new_entries = []
-    
-    try:
-        # Multiple patterns to handle different HTML structures
-        patterns = [
-            r'<tr[^>]*>[\s\S]*?<td[^>]*>([^<]*)</td>[\s\S]*?<td[^>]*>([^<]*)</td>[\s\S]*?<td[^>]*>([^<]*)</td>[\s\S]*?<td[^>]*>([^<]*)</td>[\s\S]*?<td[^>]*>([^<]*)</td>',
-            r'<tr[^>]*>\s*<td[^>]*>(.*?)</td>\s*<td[^>]*>(.*?)</td>\s*<td[^>]*>(.*?)</td>\s*<td[^>]*>(.*?)</td>\s*<td[^>]*>(.*?)</td>',
-        ]
-        
-        for pattern in patterns:
-            matches = re.findall(pattern, html_content, re.DOTALL | re.IGNORECASE)
-            if matches:
-                logging.info(f"🔍 Found {len(matches)} potential ranges")
-                break
-        else:
-            matches = []
-            logging.warning("❌ No range patterns matched")
-        
-        for match in matches:
-            if len(match) >= 5:
-                range_name = re.sub(r'<[^>]+>', '', match[0]).strip()
-                test_number = re.sub(r'<[^>]+>', '', match[1]).strip()
-                sid = re.sub(r'<[^>]+>', '', match[2]).strip()
-                message_content = re.sub(r'<[^>]+>', '', match[3]).strip()
-                receive_time = re.sub(r'<[^>]+>', '', match[4]).strip()
-                
-                # Validate data
-                if not range_name or not test_number:
-                    continue
-                    
-                # Format phone number
-                if test_number and not test_number.startswith('+'):
-                    test_number = '+' + test_number.lstrip()
-                
-                # Format time
-                if not receive_time:
-                    receive_time = time.strftime("%Y-%m-%d %H:%M:%S")
-                
-                # Create unique key
-                key = f"{range_name}-{test_number}-{receive_time}"
-                
-                if key not in posted_keys:
-                    posted_keys.add(key)
-                    new_entries.append({
-                        'range_name': range_name,
-                        'test_number': test_number,
-                        'receive_time': receive_time
-                    })
-                    logging.info(f"✅ NEW RANGE: {range_name} - {test_number}")
-    
-    except Exception as e:
-        logging.error(f"❌ Error extracting ranges: {e}")
-    
-    return new_entries
-
-# ----------------------------------------------------------------------
-# Send messages to groups
-# ----------------------------------------------------------------------
-async def send_to_all_groups(message: str, keyboard: InlineKeyboardMarkup):
-    groups = await get_all_groups()
-    success_count = 0
-    
-    if not groups:
-        logging.warning("No groups found in database")
-        return 0
-    
-    logging.info(f"📤 Sending to {len(groups)} groups...")
-    
-    for group_id, group_name in groups:
-        try:
-            await bot.send_message(
-                chat_id=group_id,
-                text=message,
-                parse_mode=ParseMode.MARKDOWN,
-                disable_web_page_preview=True,
-                reply_markup=keyboard
-            )
-            success_count += 1
-            logging.info(f"✓ Sent to: {group_name or group_id}")
-            await asyncio.sleep(1)
-            
-        except Exception as e:
-            logging.error(f"✗ Failed to send to {group_name or group_id}: {e}")
-            if "bot was blocked" in str(e).lower() or "chat not found" in str(e).lower():
-                await remove_group(group_id)
-    
-    return success_count
-
-# ----------------------------------------------------------------------
-# Bot Handlers
-# ----------------------------------------------------------------------
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    await message.answer(
-        "🤖 IVASMS Range Monitor Bot\n\n"
-        "Add me to groups and I'll share range information automatically."
-    )
+    """Start command with all available commands"""
+    commands_text = """
+🤖 IVASMS Range Monitor Bot
+
+📋 Available Commands:
+
+👥 Group Management:
+/addthisgroup - Add current group to monitoring
+/grouplist - List all monitored groups (Admin only)
+/addgroup <id> - Add group by ID (Admin only) 
+/removegroup <id> - Remove group by ID (Admin only)
+
+📊 Bot Information:
+/stats - Show bot statistics
+/debug - Show system status (Admin only)
+/help - Show this help message
+
+🔧 Controls:
+/nav - Force navigate to monitor page (Admin only)
+/gotomonitor - Alternative navigation (Admin only)
+
+💡 Simply add me to any group and I'll auto-detect, or use /addthisgroup in existing groups.
+    """
+    await message.answer(commands_text)
+
+@dp.message(Command("help"))
+async def cmd_help(message: types.Message):
+    """Help command with detailed instructions"""
+    help_text = """
+🆘 Bot Help Guide
+
+🔹 How to Setup:
+1. Add bot to your group
+2. Make bot admin (required)
+3. Bot will auto-start monitoring
+
+🔹 Manual Setup:
+Use /addthisgroup in any group to manually add it
+
+🔹 Admin Commands:
+• /grouplist - View all groups
+• /addgroup <ID> - Add specific group
+• /removegroup <ID> - Remove group
+• /stats - Bot statistics
+• /debug - System status
+
+🔹 Monitoring:
+• Checks for new ranges every 2 minutes
+• Sends to all added groups automatically
+• Different times = treated as new ranges
+
+Need help? Contact @professor_cry
+    """
+    await message.answer(help_text)
 
 @dp.message(Command("addthisgroup"))
 async def cmd_add_this_group(message: types.Message):
@@ -536,16 +213,170 @@ async def cmd_add_this_group(message: types.Message):
         
         if success:
             await message.answer(
-                f"✅ Group added!\n"
-                f"• {group_name}\n"
-                f"• ID: `{group_id}`",
+                f"✅ Group added successfully!\n\n"
+                f"📝 Group: {group_name}\n"
+                f"🆔 ID: `{group_id}`\n\n"
+                f"🤖 Bot will now send range updates every 2 minutes.\n"
+                f"Make sure I have permission to send messages!",
                 parse_mode=ParseMode.MARKDOWN
             )
+            logging.info(f"Manual group add: {group_name} ({group_id})")
         else:
-            await message.answer("❌ Failed to add group.")
+            await message.answer("❌ Failed to add group. Please try again or contact admin.")
         
     except Exception as e:
-        await message.answer(f"❌ Error: {e}")
+        await message.answer(f"❌ Error adding group: {str(e)}")
+        logging.error(f"Manual group add error: {e}")
+
+@dp.message(Command("grouplist"))
+async def cmd_group_list(message: types.Message):
+    """Show all groups in database"""
+    try:
+        if not is_admin(message.from_user.id):
+            await message.answer("❌ Admin access required!")
+            return
+            
+        groups = await get_all_groups()
+        
+        if not groups:
+            await message.answer("📋 No groups in database yet.")
+            return
+        
+        group_list = []
+        total_groups = len(groups)
+        
+        for i, (group_id, group_name) in enumerate(groups, 1):
+            group_list.append(f"{i}. {group_name or 'Unknown Group'}\n   ID: `{group_id}`")
+        
+        response = (
+            f"📋 Monitored Groups ({total_groups}):\n\n" +
+            "\n\n".join(group_list) +
+            f"\n\n💡 Use /addgroup <id> to add more groups."
+        )
+        
+        await message.answer(response, parse_mode=ParseMode.MARKDOWN)
+        
+    except Exception as e:
+        await message.answer(f"❌ Error getting group list: {str(e)}")
+        logging.error(f"Group list error: {e}")
+
+@dp.message(Command("stats"))
+async def cmd_stats(message: types.Message):
+    """Show bot statistics"""
+    try:
+        groups = await get_all_groups()
+        current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+        
+        stats_text = (
+            f"📊 Bot Statistics\n\n"
+            f"👥 Active Groups: {len(groups)}\n"
+            f"📨 Posted Ranges: {len(posted_keys)}\n"
+            f"🔄 Refresh Interval: {REFRESH_INTERVAL} seconds\n"
+            f"⏰ Last Refresh: {current_time}\n"
+            f"🔧 Status: {'🟢 Running' if driver else '🔴 Stopped'}\n\n"
+            f"💡 Bot is monitoring for new ranges every 2 minutes."
+        )
+        
+        await message.answer(stats_text)
+        
+    except Exception as e:
+        await message.answer(f"❌ Error getting stats: {str(e)}")
+
+@dp.message(Command("debug"))
+async def cmd_debug(message: types.Message):
+    """Debug command to check system status"""
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Admin access required!")
+        return
+    
+    try:
+        status = []
+        status.append("🔧 System Debug Information\n")
+        
+        # Driver status
+        status.append(f"🚗 Driver: {'🟢 INITIALIZED' if driver else '🔴 NOT INITIALIZED'}")
+        
+        if driver:
+            try:
+                current_url = driver.current_url
+                page_title = driver.title[:50] + "..." if len(driver.title) > 50 else driver.title
+                status.append(f"🌐 Current URL: {current_url}")
+                status.append(f"📄 Page Title: {page_title}")
+                status.append(f"🔐 Logged In: {'🟢 YES' if is_logged_in() else '🔴 NO'}")
+            except Exception as e:
+                status.append(f"❌ Driver Error: {str(e)}")
+        
+        # System status
+        status.append(f"📊 Groups in DB: {len(await get_all_groups())}")
+        status.append(f"📨 Posted Keys: {len(posted_keys)}")
+        status.append(f"🌐 Website Access: {'🟢 OK' else '🔴 DOWN'}")
+        status.append(f"🤖 Bot: {'🟢 RUNNING' else '🔴 STOPPED'}")
+        
+        # Add timestamp
+        status.append(f"\n🕒 Last Update: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        
+        await message.answer("\n".join(status))
+        
+    except Exception as e:
+        await message.answer(f"❌ Debug error: {str(e)}")
+
+@dp.message(Command("addgroup"))
+async def cmd_addgroup_manual(message: types.Message, command: CommandObject):
+    """Manually add group by ID (Admin only)"""
+    try:
+        if not is_admin(message.from_user.id):
+            await message.answer("❌ Admin access required!")
+            return
+
+        group_id = command.args
+        if not group_id:
+            await message.answer("❌ Please provide a Group ID\nUsage: /addgroup <group_id>")
+            return
+
+        # Validate group ID format
+        if not (group_id.startswith('-100') and group_id[1:].isdigit()):
+            await message.answer("❌ Invalid Group ID format. Should start with -100 and be numeric.")
+            return
+
+        success = await add_group(group_id, "Manually Added Group")
+        if success:
+            await message.answer(
+                f"✅ Group added successfully!\n"
+                f"🆔 ID: `{group_id}`\n\n"
+                f"Bot will now send range updates to this group.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            logging.info(f"Group manually added via command: {group_id}")
+        else:
+            await message.answer("❌ Failed to add group. It might already exist.")
+        
+    except Exception as e:
+        await message.answer(f"❌ Failed to add group: {str(e)}")
+        logging.error(f"Error in manual group add: {e}")
+
+@dp.message(Command("removegroup"))
+async def cmd_remove_group(message: types.Message, command: CommandObject):
+    """Remove group by ID (Admin only)"""
+    try:
+        if not is_admin(message.from_user.id):
+            await message.answer("❌ Admin access required!")
+            return
+
+        group_id = command.args
+        if not group_id:
+            await message.answer("❌ Please provide a Group ID\nUsage: /removegroup <group_id>")
+            return
+
+        success = await remove_group(group_id)
+        if success:
+            await message.answer(f"✅ Group `{group_id}` has been removed from database.", parse_mode=ParseMode.MARKDOWN)
+            logging.info(f"Group manually removed via command: {group_id}")
+        else:
+            await message.answer("❌ Failed to remove group. It might not exist in database.")
+        
+    except Exception as e:
+        await message.answer(f"❌ Failed to remove group: {str(e)}")
+        logging.error(f"Error in manual group remove: {e}")
 
 @dp.message(Command("nav"))
 async def cmd_navigate_manual(message: types.Message):
@@ -557,171 +388,259 @@ async def cmd_navigate_manual(message: types.Message):
     try:
         await message.answer("🔄 Attempting manual navigation to monitor page...")
         
-        if smart_navigate_to_url(MONITOR_URL):
-            await message.answer("✅ Navigation successful!")
+        if navigate_to_monitor_page():
+            await message.answer("✅ Navigation successful! Monitor page loaded.")
         else:
-            await message.answer("❌ Navigation failed!")
+            await message.answer("❌ Navigation failed! Check browser window.")
             
     except Exception as e:
-        await message.answer(f"❌ Error: {e}")
+        await message.answer(f"❌ Navigation error: {str(e)}")
 
-# ----------------------------------------------------------------------
-# MAIN MONITORING FUNCTION - COMPLETELY FIXED
-# ----------------------------------------------------------------------
-async def monitor_ranges():
-    global driver, bot
-    
-    bot = Bot(token=BOT_TOKEN)
-    
-    # Initialize driver
-    driver = init_driver()
-    if not driver:
-        logging.error("❌ Could not initialize browser driver")
+@dp.message(Command("gotomonitor"))
+async def cmd_go_to_monitor(message: types.Message):
+    """Alternative manual navigation command"""
+    if not is_admin(message.from_user.id):
+        await message.answer("❌ Admin only!")
         return
     
     try:
-        # Step 1: Navigate to login page
-        logging.info("🌐 STEP 1: Navigating to login page...")
-        if not smart_navigate_to_url(LOGIN_URL):
-            logging.error("❌ Failed to navigate to login page")
-            return
+        await message.answer("🔄 Navigating to monitor page...")
         
-        # Step 2: Wait for manual login
-        logging.info("🔑 STEP 2: Waiting for manual login...")
-        if not wait_for_manual_login():
-            logging.error("❌ Manual login failed or timeout")
-            return
+        if smart_navigate_to_url(MONITOR_URL):
+            await message.answer("✅ Successfully reached monitor page!")
+        else:
+            await message.answer("❌ Failed to reach monitor page!")
+            
+    except Exception as e:
+        await message.answer(f"❌ Error: {str(e)}")
+
+# Auto Group Detection Handler
+@dp.my_chat_member()
+async def handle_chat_member_update(chat_member: types.ChatMemberUpdated):
+    try:
+        chat = chat_member.chat
+        old_status = chat_member.old_chat_member.status
+        new_status = chat_member.new_chat_member.status
         
-        # Step 3: Navigate to monitor page - THIS IS THE FIX
-        logging.info("📊 STEP 3: Navigating to monitor page...")
-        logging.info("💡 Using smart navigation to target URL...")
+        logging.info(f"🔄 Chat member update: {chat.title} ({chat.id}) - {old_status} -> {new_status}")
         
-        if not smart_navigate_to_url(MONITOR_URL):
-            logging.error("❌ CRITICAL: Failed to navigate to monitor page")
-            logging.info("💡 Tips: Check if the URL is correct and accessible after login")
-            return
+        # Bot added to group
+        if (old_status in ["left", "kicked", "restricted"] and 
+            new_status in ["member", "administrator"]):
+            
+            if chat.type in ["group", "supergroup"]:
+                group_id = str(chat.id)
+                success = await add_group(group_id, chat.title)
+                
+                if success:
+                    logging.info(f"✅ Bot auto-added to group: {chat.title} ({group_id})")
+                    
+                    welcome_msg = (
+                        "🤖 IVASMS Range Monitor Bot Activated!\n\n"
+                        "I will automatically share new range information every 2 minutes.\n"
+                        "Make sure I have permission to send messages in this group.\n\n"
+                        "Type /addthisgroup if you don't see updates within 5 minutes."
+                    )
+                    await bot.send_message(chat.id, welcome_msg)
         
-        # Step 4: Verify we're on monitor page
-        logging.info("✅ STEP 4: Verifying monitor page...")
-        if not wait_for_monitor_page():
-            logging.error("❌ Failed to load monitor page properly")
-            return
-        
-        # Step 5: Start monitoring loop
-        logging.info("🚀 STEP 5: Starting monitoring loop...")
-        refresh_count = 0
-        
-        while True:
+        # Bot removed from group
+        elif (old_status in ["member", "administrator"] and 
+              new_status in ["left", "kicked", "restricted"]):
+            
+            if chat.type in ["group", "supergroup"]:
+                group_id = str(chat.id)
+                success = await remove_group(group_id)
+                if success:
+                    logging.info(f"❌ Bot auto-removed from group: {chat.title} ({group_id})")
+                
+    except Exception as e:
+        logging.error(f"Error handling chat member update: {e}")
+
+# =============================================================================
+# NAVIGATION AND MONITORING FUNCTIONS (Same as before)
+# =============================================================================
+
+def init_driver():
+    global driver
+    try:
+        if driver:
             try:
-                refresh_count += 1
-                logging.info(f"🔄 Refresh #{refresh_count} - Checking for new ranges...")
-                
-                # Refresh the page
-                driver.refresh()
+                driver.quit()
+            except:
+                pass
+        
+        logging.info("🔄 Initializing browser driver...")
+        driver = Driver(uc=True, headless=False, undetectable=True, incognito=True)
+        driver.set_page_load_timeout(45)
+        driver.implicitly_wait(15)
+        logging.info("✅ Driver initialized successfully")
+        return driver
+    except Exception as e:
+        logging.error(f"❌ Failed to initialize driver: {e}")
+        return None
+
+def smart_navigate_to_url(target_url, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            logging.info(f"🌐 Navigation attempt {attempt+1} to: {target_url}")
+            driver.get(target_url)
+            WebDriverWait(driver, 25).until(
+                lambda d: d.execute_script("return document.readyState") == "complete"
+            )
+            time.sleep(3)
+            logging.info("✅ Page loaded successfully")
+            return True
+        except Exception as e:
+            logging.error(f"❌ Navigation error: {e}")
+            if attempt < max_retries - 1:
                 time.sleep(5)
+    return False
+
+def is_logged_in():
+    try:
+        current_url = driver.current_url
+        if PORTAL_URL in current_url or "portal" in current_url.lower():
+            return True
+        page_source = driver.page_source.lower()
+        logged_in_indicators = ["logout", "log out", "sign out", "dashboard", "welcome"]
+        for indicator in logged_in_indicators:
+            if indicator in page_source:
+                return True
+        return False
+    except:
+        return False
+
+def navigate_to_monitor_page():
+    logging.info("📊 Navigating to monitor page...")
+    if smart_navigate_to_url(MONITOR_URL):
+        current_url = driver.current_url
+        if "sms/test/sms" in current_url:
+            logging.info("🎯 Successfully reached monitor page!")
+            return True
+    return False
+
+def wait_for_login_completion():
+    logging.info("🔑 Please complete login manually in browser...")
+    start_time = time.time()
+    while time.time() - start_time < LOGIN_TIMEOUT:
+        if is_logged_in():
+            logging.info("✅ Login detected! Navigating to monitor page...")
+            return navigate_to_monitor_page()
+        time.sleep(5)
+    return False
+
+def extract_new_ranges(html_content: str):
+    new_entries = []
+    try:
+        pattern = r'<tr[^>]*>[\s\S]*?<td[^>]*>([^<]*)</td>[\s\S]*?<td[^>]*>([^<]*)</td>[\s\S]*?<td[^>]*>([^<]*)</td>[\s\S]*?<td[^>]*>([^<]*)</td>[\s\S]*?<td[^>]*>([^<]*)</td>'
+        matches = re.findall(pattern, html_content, re.DOTALL | re.IGNORECASE)
+        
+        for match in matches:
+            if len(match) >= 5:
+                range_name = re.sub(r'<[^>]+>', '', match[0]).strip()
+                test_number = re.sub(r'<[^>]+>', '', match[1]).strip()
+                receive_time = re.sub(r'<[^>]+>', '', match[4]).strip()
                 
-                # Verify we're still on monitor page
-                current_url = driver.current_url
-                if "sms/test/sms" not in current_url:
-                    logging.warning("⚠️ Not on monitor page, attempting to navigate back...")
-                    if not smart_navigate_to_url(MONITOR_URL):
-                        logging.error("❌ Could not return to monitor page")
-                        break
-                
-                # Extract and process ranges
-                html_content = driver.page_source
-                new_ranges = extract_new_ranges(html_content)
-                
-                if new_ranges:
-                    logging.info(f"🎉 Found {len(new_ranges)} new ranges!")
-                    for range_data in new_ranges:
-                        message = build_message(
-                            range_data['range_name'],
-                            range_data['test_number'], 
-                            range_data['receive_time']
-                        )
-                        
-                        keyboard = create_keyboard()
-                        success_count = await send_to_all_groups(message, keyboard)
-                        logging.info(f"✅ Sent to {success_count} groups: {range_data['range_name']}")
-                        await asyncio.sleep(2)
-                else:
-                    logging.info("ℹ️ No new ranges found")
-                
-                # Wait for next refresh
-                next_time = time.strftime("%H:%M:%S", time.localtime(time.time() + REFRESH_INTERVAL))
-                logging.info(f"⏰ Next refresh at: {next_time}")
-                await asyncio.sleep(REFRESH_INTERVAL)
-                
-            except Exception as e:
-                logging.error(f"❌ Monitoring error: {e}")
-                await asyncio.sleep(30)
+                if range_name and test_number:
+                    if not test_number.startswith('+'):
+                        test_number = '+' + test_number.lstrip()
+                    if not receive_time:
+                        receive_time = time.strftime("%Y-%m-%d %H:%M:%S")
+                    
+                    key = f"{range_name}-{test_number}-{receive_time}"
+                    if key not in posted_keys:
+                        posted_keys.add(key)
+                        new_entries.append({
+                            'range_name': range_name,
+                            'test_number': test_number,
+                            'receive_time': receive_time
+                        })
+                        logging.info(f"✅ NEW RANGE: {range_name} - {test_number}")
+    except Exception as e:
+        logging.error(f"❌ Error extracting ranges: {e}")
+    return new_entries
+
+async def send_to_all_groups(message: str, keyboard: InlineKeyboardMarkup):
+    groups = await get_all_groups()
+    success_count = 0
+    for group_id, group_name in groups:
+        try:
+            await bot.send_message(
+                chat_id=group_id,
+                text=message,
+                parse_mode=ParseMode.MARKDOWN,
+                disable_web_page_preview=True,
+                reply_markup=keyboard
+            )
+            success_count += 1
+            await asyncio.sleep(1)
+        except Exception as e:
+            logging.error(f"✗ Failed to send to {group_name or group_id}: {e}")
+    return success_count
+
+async def monitor_ranges():
+    global driver, bot
+    bot = Bot(token=BOT_TOKEN)
+    driver = init_driver()
+    if not driver:
+        return
+    
+    try:
+        if not smart_navigate_to_url(LOGIN_URL):
+            return
+        
+        if not wait_for_login_completion():
+            return
+        
+        refresh_count = 0
+        while True:
+            refresh_count += 1
+            logging.info(f"🔄 Refresh #{refresh_count}")
+            driver.refresh()
+            time.sleep(5)
+            
+            html_content = driver.page_source
+            new_ranges = extract_new_ranges(html_content)
+            
+            if new_ranges:
+                for range_data in new_ranges:
+                    message = build_message(
+                        range_data['range_name'],
+                        range_data['test_number'], 
+                        range_data['receive_time']
+                    )
+                    keyboard = create_keyboard()
+                    await send_to_all_groups(message, keyboard)
+                    await asyncio.sleep(2)
+            
+            await asyncio.sleep(REFRESH_INTERVAL)
                 
     except Exception as e:
         logging.error(f"💥 Fatal error: {e}")
     finally:
         if driver:
-            try:
-                driver.quit()
-                logging.info("🔚 Browser closed")
-            except:
-                pass
+            driver.quit()
 
-# ----------------------------------------------------------------------
-# Health Monitor
-# ----------------------------------------------------------------------
 async def health_monitor():
     max_restarts = 3
     restarts = 0
-    
     while restarts < max_restarts:
         try:
-            logging.info(f"🚀 Starting monitor (attempt {restarts + 1}/{max_restarts})")
             await monitor_ranges()
         except Exception as e:
             restarts += 1
-            logging.error(f"💥 Monitor crashed: {e}")
-            
             if restarts < max_restarts:
-                wait_time = 60 * restarts
-                logging.info(f"🕒 Waiting {wait_time} seconds before restart...")
-                await asyncio.sleep(wait_time)
-            else:
-                logging.error("❌ Max restarts reached")
-                break
+                await asyncio.sleep(60 * restarts)
 
-# ----------------------------------------------------------------------
-# Main Function
-# ----------------------------------------------------------------------
 async def main():
     await init_database()
-    logging.info("✅ Database initialized")
-    
-    # Add target group
     await add_group("-1002631004312", "Main Monitoring Group")
-    
     bot = Bot(token=BOT_TOKEN)
     
-    groups = await get_all_groups()
-    logging.info(f"📊 Bot is in {len(groups)} groups")
-    
-    # Start tasks
     monitor_task = asyncio.create_task(health_monitor())
     bot_task = asyncio.create_task(dp.start_polling(bot))
-    
     await asyncio.gather(monitor_task, bot_task, return_exceptions=True)
 
-# ----------------------------------------------------------------------
-# Entry Point
-# ----------------------------------------------------------------------
 if __name__ == "__main__":
-    print("🚀 Starting IVASMS Range Monitor Bot")
-    print("=" * 60)
-    print("NAVIGATION FIXES APPLIED:")
-    print("• Smart navigation with multiple methods")
-    print("• Automatic link clicking if navigation fails") 
-    print("• JavaScript navigation fallback")
-    print("• Manual navigation command (/nav)")
-    print("=" * 60)
-    
+    print("🚀 Starting IVASMS Range Monitor Bot - Complete Command Set")
     asyncio.run(main())
