@@ -28,7 +28,7 @@ LOGIN_URL = "https://www.ivasms.com/login"
 PORTAL_URL = "https://www.ivasms.com/portal/"
 MONITOR_URL = "https://www.ivasms.com/portal/sms/test/sms?app=Telegram"
 LOGIN_TIMEOUT = 600
-REFRESH_INTERVAL = 120
+REFRESH_INTERVAL = 60
 
 # ----------------------------------------------------------------------
 # Global state
