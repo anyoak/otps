@@ -137,8 +137,17 @@ def create_keyboard():
 def is_admin(user_id: int):
     return user_id == ADMIN_ID
 
+# Website Availability Check
+def check_website_available():
+    try:
+        response = requests.get(LOGIN_URL, timeout=10)
+        return response.status_code == 200
+    except Exception as e:
+        logging.error(f"Website check failed: {e}")
+        return False
+
 # =============================================================================
-# COMPLETE BOT COMMANDS - ALL INCLUDED
+# COMPLETE BOT COMMANDS
 # =============================================================================
 
 @dp.message(Command("start"))
@@ -306,11 +315,11 @@ async def cmd_debug(message: types.Message):
             except Exception as e:
                 status.append(f"❌ Driver Error: {str(e)}")
         
-        # System status
+        # System status - FIXED LINE BELOW
         status.append(f"📊 Groups in DB: {len(await get_all_groups())}")
         status.append(f"📨 Posted Keys: {len(posted_keys)}")
-        status.append(f"🌐 Website Access: {'🟢 OK' else '🔴 DOWN'}")
-        status.append(f"🤖 Bot: {'🟢 RUNNING' else '🔴 STOPPED'}")
+        status.append(f"🌐 Website Access: {'🟢 OK' if check_website_available() else '🔴 DOWN'}")
+        status.append(f"🤖 Bot: {'🟢 RUNNING' if bot else '🔴 STOPPED'}")
         
         # Add timestamp
         status.append(f"\n🕒 Last Update: {time.strftime('%Y-%m-%d %H:%M:%S')}")
@@ -457,7 +466,7 @@ async def handle_chat_member_update(chat_member: types.ChatMemberUpdated):
         logging.error(f"Error handling chat member update: {e}")
 
 # =============================================================================
-# NAVIGATION AND MONITORING FUNCTIONS (Same as before)
+# NAVIGATION AND MONITORING FUNCTIONS
 # =============================================================================
 
 def init_driver():
