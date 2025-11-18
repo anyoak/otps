@@ -27,7 +27,7 @@ LOGIN_URL = "https://www.ivasms.com/login"
 PORTAL_URL = "https://www.ivasms.com/portal/"
 MONITOR_URL = "https://www.ivasms.com/portal/sms/test/sms?app=Telegram"
 LOGIN_TIMEOUT = 600
-REFRESH_INTERVAL = 120
+REFRESH_INTERVAL = 70
 
 # ----------------------------------------------------------------------
 # Global state
@@ -45,7 +45,7 @@ logging.basicConfig(
 )
 
 # ----------------------------------------------------------------------
-# Database Setup (same as before)
+# Database Setup
 # ----------------------------------------------------------------------
 async def init_database():
     async with aiosqlite.connect("groups.db") as db:
@@ -91,7 +91,7 @@ async def get_all_groups():
         return []
 
 # ----------------------------------------------------------------------
-# Country Flag Detection (same as before)
+# Country Flag Detection
 # ----------------------------------------------------------------------
 def get_country_flag(phone_number: str) -> str:
     try:
@@ -156,56 +156,124 @@ def check_website_available():
     try:
         response = requests.get(LOGIN_URL, timeout=10)
         return response.status_code == 200
-    except:
+    except Exception as e:
+        logging.error(f"Website check failed: {e}")
         return False
 
 # ----------------------------------------------------------------------
-# Enhanced Driver Initialization with Proxy Support
+# Enhanced Driver Initialization with Better Error Handling
 # ----------------------------------------------------------------------
 def init_driver():
     global driver
     
     try:
-        driver = Driver(
-            uc=True,
-            headless=False,
-            undetectable=True,
-            incognito=True,
-            agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            # Additional options for better connectivity
-            page_load_strategy="normal",
-            disable_beforeunload=True
-        )
+        # Close existing driver if any
+        if driver:
+            try:
+                driver.quit()
+            except:
+                pass
         
-        # Set longer timeouts
-        driver.set_page_load_timeout(60)
-        driver.implicitly_wait(10)
+        logging.info("🔄 Initializing browser driver...")
         
-        logging.info("✅ Driver initialized successfully")
-        return driver
+        # Try different approaches
+        driver_options = [
+            {
+                "uc": True,
+                "headless": False,
+                "undetectable": True,
+                "incognito": True,
+            },
+            {
+                "uc": True,
+                "headless": False,
+                "undetectable": True,
+            },
+            {
+                "browser": "chrome",
+                "headless": False,
+                "undetectable": True,
+            }
+        ]
+        
+        for i, options in enumerate(driver_options):
+            try:
+                logging.info(f"🔄 Attempt {i+1} with options: {options}")
+                driver = Driver(**options)
+                
+                # Set reasonable timeouts
+                driver.set_page_load_timeout(30)
+                driver.implicitly_wait(10)
+                
+                # Test the driver with a simple page
+                logging.info("🧪 Testing driver with about:blank...")
+                driver.get("about:blank")
+                
+                if driver.current_url == "about:blank":
+                    logging.info("✅ Driver initialized successfully")
+                    return driver
+                else:
+                    driver.quit()
+                    
+            except Exception as e:
+                logging.warning(f"❌ Driver attempt {i+1} failed: {e}")
+                if driver:
+                    try:
+                        driver.quit()
+                    except:
+                        pass
+                continue
+        
+        logging.error("❌ All driver initialization attempts failed")
+        return None
         
     except Exception as e:
         logging.error(f"❌ Failed to initialize driver: {e}")
         return None
 
 # ----------------------------------------------------------------------
-# Website Navigation with Retry Logic
+# Test Browser Functionality
+# ----------------------------------------------------------------------
+def test_browser_functionality():
+    """Test if browser can actually load websites"""
+    try:
+        logging.info("🧪 Testing browser with google.com...")
+        driver.get("https://www.google.com")
+        
+        # Wait for page to load
+        WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.TAG_NAME, "body"))
+        )
+        
+        logging.info("✅ Browser test successful - can load external websites")
+        return True
+        
+    except Exception as e:
+        logging.error(f"❌ Browser test failed: {e}")
+        return False
+
+# ----------------------------------------------------------------------
+# Enhanced Website Navigation
 # ----------------------------------------------------------------------
 def navigate_to_url(url, max_retries=3):
     """Navigate to URL with retry logic"""
     for attempt in range(max_retries):
         try:
             logging.info(f"🌐 Attempt {attempt + 1}/{max_retries} to navigate to: {url}")
+            
+            # Clear cookies and cache for fresh start
+            if attempt > 0:
+                driver.delete_all_cookies()
+            
             driver.get(url)
             
-            # Wait for page to start loading
-            WebDriverWait(driver, 10).until(
+            # Wait for page to load
+            WebDriverWait(driver, 20).until(
                 lambda d: d.execute_script("return document.readyState") == "complete"
             )
+            
+            # Wait a bit more for dynamic content
+            time.sleep(3)
             
             logging.info("✅ Page loaded successfully")
             return True
@@ -216,7 +284,7 @@ def navigate_to_url(url, max_retries=3):
                 logging.info("🔄 Retrying...")
                 time.sleep(5)
             else:
-                logging.error("❌ All navigation attempts failed")
+                logging.error("❌ All navigation attempts failed due to timeout")
                 return False
         except Exception as e:
             logging.error(f"❌ Navigation error on attempt {attempt + 1}: {e}")
@@ -227,29 +295,36 @@ def navigate_to_url(url, max_retries=3):
     return False
 
 # ----------------------------------------------------------------------
-# Check if website is accessible
+# Check for Common Blocking Issues
 # ----------------------------------------------------------------------
-def wait_for_website_ready(timeout=30):
-    """Wait for website to be ready and responsive"""
-    start_time = time.time()
-    while time.time() - start_time < timeout:
-        try:
-            # Check if page is responding
-            current_url = driver.current_url
-            page_state = driver.execute_script("return document.readyState")
+def check_for_blocks():
+    """Check for common website blocking techniques"""
+    try:
+        current_url = driver.current_url
+        page_source = driver.page_source.lower()
+        page_title = driver.title.lower()
+        
+        # Check for common blocking indicators
+        blocks = [
+            ("cloudflare", "cloudflare" in page_source or "cloudflare" in page_title),
+            ("access denied", "access denied" in page_source),
+            ("bot detected", "bot" in page_source and "detected" in page_source),
+            ("security check", "security" in page_source and "check" in page_source),
+            ("captcha", "captcha" in page_source),
+            ("blocked", "blocked" in page_source),
+            ("unusual traffic", "unusual" in page_source and "traffic" in page_source),
+        ]
+        
+        found_blocks = [name for name, found in blocks if found]
+        if found_blocks:
+            logging.warning(f"🚫 Possible blocks detected: {', '.join(found_blocks)}")
+            return True
             
-            if page_state == "complete":
-                # Check for common error pages
-                page_source = driver.page_source.lower()
-                if "error" not in page_source and "not found" not in page_source:
-                    return True
-            
-            time.sleep(2)
-        except Exception as e:
-            logging.warning(f"Website not ready yet: {e}")
-            time.sleep(2)
-    
-    return False
+        return False
+        
+    except Exception as e:
+        logging.error(f"Error checking for blocks: {e}")
+        return False
 
 # ----------------------------------------------------------------------
 # Enhanced CAPTCHA Handling
@@ -265,16 +340,22 @@ def is_cloudflare_captcha_present():
             if indicator in page_source or indicator in current_url:
                 return True
         
+        # Check for common CAPTCHA selectors
         captcha_selectors = [
             "div[class*='cf-challenge']",
             "div[class*='challenge']", 
             "iframe[src*='challenges.cloudflare.com']",
-            "div[id*='cf-challenge']"
+            "div[id*='cf-challenge']",
+            ".cf-turnstile",
+            "#cf-challenge"
         ]
         
         for selector in captcha_selectors:
-            if driver.find_elements(By.CSS_SELECTOR, selector):
-                return True
+            try:
+                if driver.find_elements(By.CSS_SELECTOR, selector):
+                    return True
+            except:
+                continue
                 
         return False
     except:
@@ -283,10 +364,14 @@ def is_cloudflare_captcha_present():
 def wait_for_captcha_completion(timeout=300):
     """Wait for manual CAPTCHA completion"""
     logging.info("🔍 CAPTCHA detected! Please complete it manually in the browser.")
+    logging.info("💡 Tips: If CAPTCHA doesn't appear, try refreshing the page (F5)")
+    
     start_time = time.time()
+    last_status = time.time()
     
     while time.time() - start_time < timeout:
         try:
+            # Check if CAPTCHA is gone
             if not is_cloudflare_captcha_present():
                 logging.info("✅ CAPTCHA completed!")
                 return True
@@ -295,12 +380,17 @@ def wait_for_captcha_completion(timeout=300):
             if is_logged_in():
                 logging.info("✅ Successfully logged in!")
                 return True
-                
-            # Show remaining time every 30 seconds
-            elapsed = time.time() - start_time
-            if int(elapsed) % 30 == 0:
+            
+            # Show status every 30 seconds
+            if time.time() - last_status > 30:
+                elapsed = time.time() - start_time
                 remaining = timeout - elapsed
                 logging.info(f"⏳ Waiting for CAPTCHA... {int(remaining)}s remaining")
+                logging.info("💡 Still seeing CAPTCHA? Try:")
+                logging.info("   • Refreshing the page (F5)")
+                logging.info("   • Checking if the website is accessible")
+                logging.info("   • Waiting a few minutes and trying again")
+                last_status = time.time()
                 
             time.sleep(5)
             
@@ -424,6 +514,30 @@ async def cmd_stats(message: types.Message):
                         f"• Refresh Interval: {REFRESH_INTERVAL} seconds\n"
                         f"• Last Refresh: {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
+@dp.message(Command("debug"))
+async def cmd_debug(message: types.Message):
+    """Debug command to check browser status"""
+    global driver
+    
+    status = []
+    status.append("🔧 Debug Information:")
+    status.append(f"• Driver initialized: {driver is not None}")
+    
+    if driver:
+        try:
+            current_url = driver.current_url
+            status.append(f"• Current URL: {current_url}")
+            status.append(f"• Page title: {driver.title}")
+        except Exception as e:
+            status.append(f"• Driver error: {e}")
+    else:
+        status.append("• Driver: NOT INITIALIZED")
+    
+    status.append(f"• Website accessible: {check_website_available()}")
+    status.append(f"• Posted keys count: {len(posted_keys)}")
+    
+    await message.answer("\n".join(status))
+
 @dp.my_chat_member()
 async def handle_chat_member_update(chat_member: types.ChatMemberUpdated):
     try:
@@ -463,48 +577,76 @@ async def monitor_ranges():
     
     bot = Bot(token=BOT_TOKEN)
     
-    # Initialize driver
-    driver = init_driver()
+    # Initialize driver with retry
+    max_driver_attempts = 3
+    for attempt in range(max_driver_attempts):
+        driver = init_driver()
+        if driver:
+            break
+        logging.warning(f"🚨 Driver initialization failed, attempt {attempt + 1}/{max_driver_attempts}")
+        if attempt < max_driver_attempts - 1:
+            await asyncio.sleep(10)
+    
     if not driver:
-        logging.error("❌ Could not initialize browser driver")
+        logging.error("❌ Could not initialize browser driver after all attempts")
+        await send_admin_alert("❌ Browser driver initialization failed completely")
         return
     
     try:
-        # Step 1: Check if website is accessible
+        # Step 1: Test browser functionality
+        logging.info("🧪 Testing browser functionality...")
+        if not test_browser_functionality():
+            logging.error("❌ Browser functionality test failed")
+            await send_admin_alert("❌ Browser cannot load websites")
+            return
+        
+        # Step 2: Check if website is accessible
         logging.info("🔍 Checking website availability...")
         if not check_website_available():
             logging.warning("⚠️ Website might be down or inaccessible")
             # Continue anyway as it might be blocking HTTP requests but allowing browsers
         
-        # Step 2: Navigate to login page
+        # Step 3: Navigate to login page
         logging.info("🌐 Navigating to login page...")
         if not navigate_to_url(LOGIN_URL):
             logging.error("❌ Failed to navigate to login page")
+            
+            # Check for blocking
+            if check_for_blocks():
+                logging.error("🚫 Website is blocking the browser")
+                await send_admin_alert("🚫 Website is blocking the browser access")
             return
         
-        # Step 3: Wait for website to be ready
-        if not wait_for_website_ready():
-            logging.warning("⚠️ Website might be slow or having issues")
-        
-        # Step 4: Handle CAPTCHA if present
-        if is_cloudflare_captcha_present():
+        # Step 4: Check for CAPTCHA or blocks
+        if check_for_blocks() or is_cloudflare_captcha_present():
             logging.info("🛡️ Cloudflare protection detected")
             if not wait_for_captcha_completion():
                 logging.error("❌ CAPTCHA not completed in time")
+                await send_admin_alert("❌ CAPTCHA not completed in time")
                 return
         else:
             logging.info("✅ No CAPTCHA detected, waiting for manual login...")
         
         # Step 5: Wait for manual login
         logging.info("🔑 Please log in manually in the browser window...")
+        logging.info("💡 After logging in, the bot will automatically start monitoring")
+        
         login_start = time.time()
         while time.time() - login_start < LOGIN_TIMEOUT:
             if is_logged_in():
                 logging.info("✅ Login successful!")
                 break
+            
+            # Show progress every 30 seconds
+            if int(time.time() - login_start) % 30 == 0:
+                elapsed = time.time() - login_start
+                remaining = LOGIN_TIMEOUT - elapsed
+                logging.info(f"⏳ Waiting for login... {int(remaining)}s remaining")
+                
             await asyncio.sleep(5)
         else:
             logging.error("❌ Login timeout! Please check credentials and try again.")
+            await send_admin_alert("❌ Login timeout! Please check the browser.")
             return
         
         # Step 6: Navigate to monitor page
@@ -529,6 +671,7 @@ async def monitor_ranges():
                 # Check if still logged in
                 if not is_logged_in():
                     logging.error("❌ Logged out! Please restart the bot.")
+                    await send_admin_alert("❌ Bot got logged out, needs restart")
                     break
                 
                 # Extract and send ranges
@@ -560,7 +703,8 @@ async def monitor_ranges():
                 await asyncio.sleep(30)
                 
     except Exception as e:
-        logging.error(f"💥 Fatal error: {e}")
+        logging.error(f"💥 Fatal error in monitor: {e}")
+        await send_admin_alert(f"💥 Monitor crashed: {e}")
     finally:
         if driver:
             try:
@@ -568,6 +712,15 @@ async def monitor_ranges():
                 logging.info("🔚 Browser closed")
             except:
                 pass
+
+async def send_admin_alert(message: str):
+    """Send alert to first group in database"""
+    try:
+        groups = await get_all_groups()
+        if groups:
+            await bot.send_message(chat_id=groups[0][0], text=f"🚨 {message}")
+    except Exception as e:
+        logging.error(f"Failed to send admin alert: {e}")
 
 # ----------------------------------------------------------------------
 # Health Monitor
@@ -604,22 +757,24 @@ async def main():
     groups = await get_all_groups()
     logging.info(f"📊 Bot is in {len(groups)} groups")
     
+    # Start tasks
     monitor_task = asyncio.create_task(health_monitor())
     bot_task = asyncio.create_task(dp.start_polling(bot))
     
     await asyncio.gather(monitor_task, bot_task, return_exceptions=True)
 
 # ----------------------------------------------------------------------
-# Entry Point
+# Entry Point with Better Diagnostics
 # ----------------------------------------------------------------------
 if __name__ == "__main__":
     print("🚀 Starting IVASMS Range Monitor Bot")
     print("=" * 60)
     print("Troubleshooting Guide:")
-    print("• If website doesn't open, check your internet connection")
-    print("• Make sure the website URL is correct and accessible")
-    print("• If CAPTCHA appears, complete it manually in the browser")
-    print("• Ensure you have the latest Chrome browser installed")
+    print("• Make sure Chrome browser is installed")
+    print("• Check your internet connection")
+    print("• If browser doesn't open, try running as administrator")
+    print("• Make sure the website is accessible in your browser")
+    print("• If blocked by Cloudflare, complete CAPTCHA manually")
     print("=" * 60)
     
     # Check dependencies
@@ -634,5 +789,19 @@ if __name__ == "__main__":
         logging.error(f"❌ Missing package: {e}")
         logging.info("💡 Run: pip install seleniumbase phonenumbers pycountry aiosqlite requests")
         exit(1)
+    
+    # Additional system checks
+    try:
+        import selenium
+        logging.info(f"✅ Selenium version: {selenium.__version__}")
+    except:
+        logging.warning("⚠️ Selenium version check failed")
+    
+    try:
+        # Test basic web request
+        response = requests.get("https://www.google.com", timeout=10)
+        logging.info("✅ Internet connection: OK")
+    except:
+        logging.error("❌ No internet connection or network issues")
     
     asyncio.run(main())
