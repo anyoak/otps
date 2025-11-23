@@ -19,12 +19,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Bot configuration
-API_TOKEN = "8428320400:AAFeExw8eyMiFv-l2TiHXaILKBzc_rBhMcM"
-ADMIN_IDS = [7868585904, 6577308099]
-MAIN_CHANNEL = '@atik_method_zone'
-BACKUP_CHANNEL = '-1003096164193'
-BACKUP_CHANNEL_LINK = 'https://t.me/+8REFroGEWNM5ZjE9'
-OTP_CHANNEL = '@atik_methodzone_Otp'
+API_TOKEN = "8417470449:AAFscMp5KvHtBfCKWQFVMiPPLcN4JYchMoI"
+ADMIN_IDS = [6577308099, 6083895678]
+MAIN_CHANNEL = '@mailtwist'
+BACKUP_CHANNEL = '-1001817856867'
+BACKUP_CHANNEL_LINK = 'https://t.me/+FFG2MEKtQsxkMTQ9'
+OTP_CHANNEL = '@TwistToEarn'
 
 if ':' not in API_TOKEN:
     raise ValueError('Invalid bot token format.')
@@ -429,7 +429,7 @@ def show_main_menu(chat_id, user_id):
     
     for country in countries:
         country_name = country[0]
-        btn = types.InlineKeyboardButton(f"🌍 {country_name}", callback_data=f"country_{country_name}")
+        btn = types.InlineKeyboardButton(f" {country_name}", callback_data=f"country_{country_name}")
         markup.add(btn)
     
     if is_admin(user_id):
