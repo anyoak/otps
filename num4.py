@@ -24,7 +24,7 @@ ADMIN_IDS = [6577308099, 6083895678]
 MAIN_CHANNEL = '@mailtwist'
 BACKUP_CHANNEL = '-1001817856867'
 BACKUP_CHANNEL_LINK = 'https://t.me/+FFG2MEKtQsxkMTQ9'
-OTP_CHANNEL = '@TwistToEarn'
+OTP_CHANNEL = '@OrangeTrack'
 
 if ':' not in API_TOKEN:
     raise ValueError('Invalid bot token format.')
