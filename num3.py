@@ -5,6 +5,8 @@ import os
 import csv
 import re
 import threading
+import subprocess
+import sys
 from datetime import datetime, timedelta
 from threading import Thread
 import telebot
@@ -18,12 +20,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Bot configuration
-API_TOKEN = "8428320400:AAFeExw8eyMiFv-l2TiHXaILKBzc_rBhMcM"
-ADMIN_IDS = [7868585904, 6577308099]
-MAIN_CHANNEL = '@atik_method_zone'
-BACKUP_CHANNEL = '-1003096164193'
-BACKUP_CHANNEL_LINK = 'https://t.me/+8REFroGEWNM5ZjE9'
-OTP_CHANNEL = '@atik_methodzone_Otp'
+API_TOKEN = "8417470449:AAFscMp5KvHtBfCKWQFVMiPPLcN4JYchMoI"
+ADMIN_IDS = [6577308099, 6083895678]
+
+# Default channel values (used only as fallback / initial database values)
+DEFAULT_MAIN_CHANNEL = '@mailtwist'
+DEFAULT_BACKUP_CHANNEL = '-1001817856867'
+DEFAULT_BACKUP_CHANNEL_LINK = 'https://t.me/+FFG2MEKtQsxkMTQ9'
+DEFAULT_OTP_CHANNEL = '@OrangeTrack'
 
 if ':' not in API_TOKEN:
     raise ValueError('Invalid bot token format.')
@@ -70,6 +74,29 @@ class Database:
             c.execute('''CREATE TABLE IF NOT EXISTS notifications
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, country TEXT, notified INTEGER DEFAULT 0)''')
             
+            # NEW: Add table for bot status
+            c.execute('''CREATE TABLE IF NOT EXISTS bot_status
+                         (id INTEGER PRIMARY KEY CHECK (id = 1), is_enabled INTEGER DEFAULT 1)''')
+            
+            # Initialize bot status if not exists
+            c.execute("INSERT OR IGNORE INTO bot_status (id, is_enabled) VALUES (1, 1)")
+
+            # NEW: Channel settings table
+            c.execute('''CREATE TABLE IF NOT EXISTS channel_settings
+                         (id INTEGER PRIMARY KEY CHECK (id = 1),
+                          main_channel TEXT,
+                          backup_channel TEXT,
+                          backup_channel_link TEXT,
+                          otp_channel TEXT)''')
+
+            c.execute("""INSERT OR IGNORE INTO channel_settings 
+                         (id, main_channel, backup_channel, backup_channel_link, otp_channel)
+                         VALUES (1, ?, ?, ?, ?)""",
+                      (DEFAULT_MAIN_CHANNEL,
+                       DEFAULT_BACKUP_CHANNEL,
+                       DEFAULT_BACKUP_CHANNEL_LINK,
+                       DEFAULT_OTP_CHANNEL))
+            
             cls._connection.commit()
     
     @classmethod
@@ -112,6 +139,58 @@ class Database:
 # Initialize database
 db = Database()
 
+# === Channel settings helpers ===
+def get_channel_settings():
+    c = db.execute("SELECT main_channel, backup_channel, backup_channel_link, otp_channel FROM channel_settings WHERE id = 1")
+    row = c.fetchone()
+    if row:
+        return row['main_channel'], row['backup_channel'], row['backup_channel_link'], row['otp_channel']
+    # Fallback (should not happen normally)
+    return DEFAULT_MAIN_CHANNEL, DEFAULT_BACKUP_CHANNEL, DEFAULT_BACKUP_CHANNEL_LINK, DEFAULT_OTP_CHANNEL
+
+def update_channel_settings(main=None, backup=None, link=None, otp=None):
+    current_main, current_backup, current_link, current_otp = get_channel_settings()
+    main = main if main not in (None, '') else current_main
+    backup = backup if backup not in (None, '') else current_backup
+    link = link if link not in (None, '') else current_link
+    otp = otp if otp not in (None, '') else current_otp
+
+    db.execute("""UPDATE channel_settings 
+                  SET main_channel=?, backup_channel=?, backup_channel_link=?, otp_channel=?
+                  WHERE id=1""",
+               (main, backup, link, otp))
+
+# NEW: Function to check if bot is enabled
+def is_bot_enabled():
+    c = db.execute("SELECT is_enabled FROM bot_status WHERE id = 1")
+    result = c.fetchone()
+    return result[0] == 1 if result else True
+
+# NEW: Function to set bot status
+def set_bot_status(enabled):
+    status = 1 if enabled else 0
+    db.execute("UPDATE bot_status SET is_enabled = ? WHERE id = 1", (status,))
+    return True
+
+# NEW: Function to notify all users
+def notify_all_users(message_text):
+    c = db.execute("SELECT user_id FROM users WHERE is_banned = 0")
+    users = c.fetchall()
+    
+    success = 0
+    failed = 0
+    
+    for user in users:
+        try:
+            bot.send_message(user[0], message_text)
+            success += 1
+        except Exception as e:
+            logger.error(f"Failed to notify user {user[0]}: {e}")
+            failed += 1
+        time.sleep(0.1)  # Rate limiting
+    
+    return success, failed
+
 # Utility functions
 def update_user_stats(user_id):
     today = datetime.now().strftime("%Y-%m-%d")
@@ -146,14 +225,15 @@ def check_membership(user_id, force_check=False):
     
     for attempt in range(max_retries):
         try:
+            main_channel, backup_channel, backup_link, otp_channel = get_channel_settings()
             # Check main channel membership
-            main_member = bot.get_chat_member(MAIN_CHANNEL, user_id)
+            main_member = bot.get_chat_member(main_channel, user_id)
             if main_member.status not in ['member', 'administrator', 'creator']:
                 result = (False, "public")
                 break
                 
             # Check backup channel membership
-            backup_member = bot.get_chat_member(BACKUP_CHANNEL, user_id)
+            backup_member = bot.get_chat_member(backup_channel, user_id)
             if backup_member.status not in ['member', 'administrator', 'creator']:
                 result = (False, "private")
                 break
@@ -290,15 +370,53 @@ def admin_panel(chat_id):
     btn3 = types.InlineKeyboardButton("📊 Statistics", callback_data="admin_stats")
     btn4 = types.InlineKeyboardButton("👤 User Management", callback_data="admin_users")
     btn5 = types.InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast")
+    btn6 = types.InlineKeyboardButton("🔍 Find Number", callback_data="admin_find_number")
+    btn7 = types.InlineKeyboardButton("🔄 Restart Bot", callback_data="admin_restart")
+    btn8 = types.InlineKeyboardButton("⚙️ Channel Settings", callback_data="admin_channel_settings")
     
     markup.row(btn1, btn2)
     markup.row(btn3, btn4)
-    markup.row(btn5)
+    markup.row(btn5, btn6)
+    markup.row(btn7)
+    markup.row(btn8)
     
     bot.send_message(chat_id, "🔧 Admin Panel\n\nSelect an option:", reply_markup=markup)
 
 # Start command
-@bot.message_handler(commands=['start'])
+@bot.message_handler(commands=['start', 'help', 'push', 'on'])  # Added /on command
+def handle_commands(message):
+    # NEW: Check if bot is disabled for non-admin users
+    if not is_admin(message.from_user.id) and not is_bot_enabled():
+        if message.text == '/push' or message.text == '/on':
+            # These commands are for admins only
+            bot.reply_to(message, "❌ Access denied!")
+            return
+            
+        # For regular users when bot is disabled
+        bot.reply_to(message, "❌ Admin has disabled the bot. Please try again after some time.")
+        return
+    
+    if message.text == '/push':
+        if is_admin(message.from_user.id):
+            # Disable the bot
+            set_bot_status(False)
+            bot.reply_to(message, "✅ Bot has been disabled. Users will be notified when trying to use it.")
+        else:
+            bot.reply_to(message, "❌ Access denied!")
+        return
+    
+    if message.text == '/on':
+        if is_admin(message.from_user.id):
+            # Enable the bot and notify all users
+            set_bot_status(True)
+            success, failed = notify_all_users("✅ The bot is now back online! You can start using it again.")
+            bot.reply_to(message, f"✅ Bot has been enabled. Notifications sent: {success} successful, {failed} failed.")
+        else:
+            bot.reply_to(message, "❌ Access denied!")
+        return
+    
+    send_welcome(message)
+
 def send_welcome(message):
     user_id = message.from_user.id
     username = message.from_user.username
@@ -318,6 +436,7 @@ def send_welcome(message):
                    (user_id, username, first_name, last_name, join_date))
     
     is_member, channel_type = check_membership(user_id, force_check=True)  # Force fresh check for new users
+    main_channel, backup_channel, backup_link, otp_channel = get_channel_settings()
     
     if not is_member:
         if channel_type == "public":
@@ -328,8 +447,8 @@ def send_welcome(message):
             error_msg = "❌ You need to join our channels to use this bot."
         
         markup = types.InlineKeyboardMarkup()
-        main_btn = types.InlineKeyboardButton("📢 Main Channel", url=f"https://t.me/{MAIN_CHANNEL[1:]}")
-        backup_btn = types.InlineKeyboardButton("🔗 Backup Channel", url=BACKUP_CHANNEL_LINK)
+        main_btn = types.InlineKeyboardButton("📢 Main Channel", url=f"https://t.me/{main_channel.lstrip('@')}")
+        backup_btn = types.InlineKeyboardButton("🔗 Backup Channel", url=backup_link)
         check_btn = types.InlineKeyboardButton("✅ Check Membership", callback_data="check_membership")
         
         markup.row(main_btn)
@@ -338,7 +457,7 @@ def send_welcome(message):
         
         bot.send_message(message.chat.id, 
                         f"{error_msg}\n\n"
-                        f"✅ Main Channel: {MAIN_CHANNEL}\n"
+                        f"✅ Main Channel: {main_channel}\n"
                         f"✅ Backup Channel: Join via the button below\n\n"
                         "After joining both channels, click 'Check Membership'.",
                         reply_markup=markup)
@@ -362,14 +481,21 @@ def show_main_menu(chat_id, user_id):
         markup.add(admin_btn)
     
     bot.send_message(chat_id, 
-                    "🌍 Select a country:\n\n"
-                    "Choose a country to get a number from the available options.",
+                    "🌍 Welcome to Number Generator Bot!\n\n"
+                    "✨ Choose a country to get a unique phone number for verification purposes.\n"
+                    "🔐 All numbers are private and secure.\n\n"
+                    "Select a country from the options below:",
                     reply_markup=markup)
 
 # Callback query handler
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
     try:
+        # NEW: Check if bot is disabled for non-admin users
+        if not is_admin(call.from_user.id) and not is_bot_enabled():
+            bot.answer_callback_query(call.id, "❌ Admin has disabled the bot. Please try again after some time.", show_alert=True)
+            return
+            
         bot.answer_callback_query(call.id)
         Thread(target=process_callback, args=(call,)).start()
     except Exception as e:
@@ -412,9 +538,97 @@ def process_callback(call):
             except:
                 pass
         return
+
+    # Channel settings panel
+    if call.data == "admin_channel_settings":
+        if not is_admin(user_id):
+            try:
+                bot.answer_callback_query(call.id, "❌ Access denied!", show_alert=True)
+            except:
+                pass
+            return
+
+        main_channel, backup_channel, backup_link, otp_channel = get_channel_settings()
+
+        text = (
+            "⚙️ *Channel Settings*\n\n"
+            f"📢 Main Channel: `{main_channel}`\n"
+            f"🔄 Backup Channel (ID): `{backup_channel}`\n"
+            f"🔗 Backup Link: `{backup_link}`\n"
+            f"🔑 OTP Channel: `{otp_channel}`\n\n"
+            "Choose what you want to update:"
+        )
+
+        markup = types.InlineKeyboardMarkup()
+        markup.row(
+            types.InlineKeyboardButton("Main", callback_data="set_main"),
+            types.InlineKeyboardButton("Backup", callback_data="set_backup")
+        )
+        markup.row(
+            types.InlineKeyboardButton("Backup Link", callback_data="set_backup_link"),
+            types.InlineKeyboardButton("OTP", callback_data="set_otp")
+        )
+
+        bot.send_message(chat_id, text, parse_mode="Markdown", reply_markup=markup)
+        return
+
+    if call.data == "set_main":
+        if not is_admin(user_id):
+            bot.answer_callback_query(call.id, "❌ Access denied!", show_alert=True)
+            return
+        msg = bot.send_message(chat_id, "Send new Main Channel username (like @example):")
+        bot.register_next_step_handler(msg, update_main)
+        return
+
+    if call.data == "set_backup":
+        if not is_admin(user_id):
+            bot.answer_callback_query(call.id, "❌ Access denied!", show_alert=True)
+            return
+        msg = bot.send_message(chat_id, "Send new Backup Channel chat ID (like -10018xxxxxx):")
+        bot.register_next_step_handler(msg, update_backup)
+        return
+
+    if call.data == "set_backup_link":
+        if not is_admin(user_id):
+            bot.answer_callback_query(call.id, "❌ Access denied!", show_alert=True)
+            return
+        msg = bot.send_message(chat_id, "Send new Backup Channel invite link:")
+        bot.register_next_step_handler(msg, update_backup_link)
+        return
+
+    if call.data == "set_otp":
+        if not is_admin(user_id):
+            bot.answer_callback_query(call.id, "❌ Access denied!", show_alert=True)
+            return
+        msg = bot.send_message(chat_id, "Send new OTP Channel username (like @OtpChannel):")
+        bot.register_next_step_handler(msg, update_otp)
+        return
+    
+    if call.data == "admin_restart":
+        if is_admin(user_id):
+            try:
+                bot.edit_message_text("🔄 Restarting bot...", chat_id, message_id)
+                os.execv(sys.executable, [sys.executable] + sys.argv)
+            except Exception as e:
+                bot.edit_message_text(f"❌ Error restarting: {str(e)}", chat_id, message_id)
+        else:
+            bot.answer_callback_query(call.id, "❌ Access denied!")
+        return
+    
+    if call.data == "admin_find_number":
+        if not is_admin(user_id):
+            try:
+                bot.answer_callback_query(call.id, "❌ Access denied!")
+            except:
+                pass
+            return
+        
+        msg = bot.send_message(chat_id, "🔍 Send the phone number to find (with country code, e.g., +1234567890):")
+        bot.register_next_step_handler(msg, find_number_info)
+        return
     
     if call.data.startswith("country_"):
-        country = call.data.split("_")[1]
+        country = call.data.split("_", 1)[1]
         
         is_member, channel_type = check_membership(user_id)
         if not is_member:
@@ -448,20 +662,23 @@ def process_callback(call):
         update_user_stats(user_id)
         set_cooldown(user_id)
         check_and_notify_country_empty(country)
+
+        main_channel, backup_channel, backup_link, otp_channel = get_channel_settings()
         
         markup = types.InlineKeyboardMarkup()
         change_btn = types.InlineKeyboardButton("🔄 Change Number", callback_data=f"change_{country}")
-        otp_btn = types.InlineKeyboardButton("🔑 SEE OTP", url=f"https://t.me/{OTP_CHANNEL[1:]}")
-        back_btn = types.InlineKeyboardButton("⬅️ Back", callback_data="back_to_countries")
+        otp_btn = types.InlineKeyboardButton("🔑 SEE OTP", url=f"https://t.me/{otp_channel.lstrip('@')}")
+        back_btn = types.InlineKeyboardButton("⬅️ Back to Menu", callback_data="back_to_countries")
         
         markup.row(change_btn)
         markup.row(otp_btn)
         markup.row(back_btn)
         
         message_text = f"✅ Your Unique {country} Number:\n\n\t\t> `{number}` <\n\n"
-        message_text += "• Tap on the number to copy it to clipboard\n"
-        message_text += "• This is your personal one-time use number\n"
-        message_text += "• Please do NOT use this number for any illegal activities"
+        message_text += "• Tap on the number to copy it to clipboard 📋\n"
+        message_text += "• This is your personal one-time use number 🔒\n"
+        message_text += "• Please do NOT use this number for any illegal activities ⚠️\n\n"
+        message_text += "✨ Join our OTP channel to receive verification codes"
         
         try:
             bot.edit_message_text(message_text, chat_id, message_id, parse_mode='Markdown', reply_markup=markup)
@@ -470,7 +687,7 @@ def process_callback(call):
         return
     
     if call.data.startswith("change_"):
-        country = call.data.split("_")[1]
+        country = call.data.split("_", 1)[1]
         
         cooldown = check_cooldown(user_id)
         if cooldown > 0:
@@ -518,20 +735,23 @@ def process_callback(call):
         update_user_stats(user_id)
         set_cooldown(user_id)
         check_and_notify_country_empty(country)
+
+        main_channel, backup_channel, backup_link, otp_channel = get_channel_settings()
         
         markup = types.InlineKeyboardMarkup()
         change_btn = types.InlineKeyboardButton("🔄 Change Number", callback_data=f"change_{country}")
-        otp_btn = types.InlineKeyboardButton("🔑 SEE OTP", url=f"https://t.me/{OTP_CHANNEL[1:]}")
-        back_btn = types.InlineKeyboardButton("⬅️ Back", callback_data="back_to_countries")
+        otp_btn = types.InlineKeyboardButton("🔑 SEE OTP", url=f"https://t.me/{otp_channel.lstrip('@')}")
+        back_btn = types.InlineKeyboardButton("⬅️ Back to Menu", callback_data="back_to_countries")
         
         markup.row(change_btn)
         markup.row(otp_btn)
         markup.row(back_btn)
         
-        message_text = f"✅ Your Unique {country} Number:\n\n\t\t> `{new_number}` <\n\n"
-        message_text += "• Tap on the number to copy it to clipboard\n"
-        message_text += "• This is your personal one-time use number\n"
-        message_text += "• Please do NOT use this number for any illegal activities"
+        message_text = f"✅ Your New {country} Number:\n\n\t\t> `{new_number}` <\n\n"
+        message_text += "• Tap on the number to copy it to clipboard 📋\n"
+        message_text += "• This is your personal one-time use number 🔒\n"
+        message_text += "• Please do NOT use this number for any illegal activities ⚠️\n\n"
+        message_text += "✨ Join our OTP channel to receive verification codes"
         
         try:
             bot.edit_message_text(message_text, chat_id, message_id, parse_mode='Markdown', reply_markup=markup)
@@ -586,7 +806,7 @@ def process_callback(call):
                 pass
             return
         
-        country = call.data.split("_")[1]
+        country = call.data.split("_", 1)[1]
         
         markup = types.InlineKeyboardMarkup()
         confirm_btn = types.InlineKeyboardButton("✅ Yes, Delete", callback_data=f"confirm_remove_{country}")
@@ -604,7 +824,7 @@ def process_callback(call):
                 pass
             return
         
-        country = call.data.split("_")[2]
+        country = call.data.split("_", 2)[2]
         
         # Use a retry mechanism for database operations
         max_retries = 3
@@ -642,6 +862,7 @@ def process_callback(call):
         stats_text += "📈 Country-wise Stats:\n"
         
         for country, total, used in country_stats:
+            used = used if used is not None else 0
             available = total - used
             stats_text += f"• {country}: {used}/{total} (Available: {available})\n"
         
@@ -719,6 +940,46 @@ def process_callback(call):
         msg = bot.send_message(chat_id, "Send the message you want to broadcast to all users:")
         bot.register_next_step_handler(msg, broadcast_message)
         return
+
+# New function to find number information
+def find_number_info(message):
+    number = message.text.strip()
+    
+    # Clean the number format
+    cleaned_number = re.sub(r'(?!^\+)[^\d]', '', number)
+    if not cleaned_number.startswith('+'):
+        cleaned_number = '+' + cleaned_number
+    
+    c = db.execute("""
+        SELECT n.number, n.country, n.use_date, n.used_by, 
+               u.username, u.first_name, u.last_name, u.user_id
+        FROM numbers n
+        LEFT JOIN users u ON n.used_by = u.user_id
+        WHERE n.number = ?
+    """, (cleaned_number,))
+    
+    result = c.fetchone()
+    
+    if result:
+        number, country, use_date, used_by, username, first_name, last_name, user_id = result
+        
+        if used_by:
+            user_info = f"👤 User Information:\n\n"
+            user_info += f"• User ID: {user_id}\n"
+            user_info += f"• Username: @{username if username else 'N/A'}\n"
+            user_info += f"• Full Name: {first_name} {last_name if last_name else ''}\n"
+            user_info += f"• Number Used: {number}\n"
+            user_info += f"• Country: {country}\n"
+            user_info += f"• Use Date: {use_date}"
+        else:
+            user_info = f"ℹ️ Number Information:\n\n"
+            user_info += f"• Number: {number}\n"
+            user_info += f"• Country: {country}\n"
+            user_info += f"• Status: {'Available' if not used_by else 'Used'}\n"
+        
+        bot.send_message(message.chat.id, user_info)
+    else:
+        bot.send_message(message.chat.id, f"❌ Number {number} not found in the database.")
 
 # Admin functions
 def process_country_name(message):
@@ -841,9 +1102,30 @@ def broadcast_message(message):
     
     bot.send_message(message.chat.id, f"✅ Broadcast completed!\n\nSuccess: {success}\nFailed: {failed}")
 
+# === Channel update step handlers ===
+def update_main(message):
+    new_main = message.text.strip()
+    update_channel_settings(main=new_main)
+    bot.send_message(message.chat.id, f"✅ Main Channel updated to: {new_main}")
+
+def update_backup(message):
+    new_backup = message.text.strip()
+    update_channel_settings(backup=new_backup)
+    bot.send_message(message.chat.id, f"✅ Backup Channel ID updated to: {new_backup}")
+
+def update_backup_link(message):
+    new_link = message.text.strip()
+    update_channel_settings(link=new_link)
+    bot.send_message(message.chat.id, f"✅ Backup Channel Link updated to: {new_link}")
+
+def update_otp(message):
+    new_otp = message.text.strip()
+    update_channel_settings(otp=new_otp)
+    bot.send_message(message.chat.id, f"✅ OTP Channel updated to: {new_otp}")
+
 # Run the bot
 if __name__ == "__main__":
-    print("Bot is running...")
+    print("🤖 Bot is running...")
     try:
         bot.infinity_polling(timeout=10, long_polling_timeout=5)
     except Exception as e:
